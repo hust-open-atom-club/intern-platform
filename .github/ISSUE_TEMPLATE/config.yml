@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 参与指南 / 使用说明
+    url: https://intern.openatom.club/guide
+    about: 先看平台使用说明，确认是否已有解答
+  - name: 俱乐部沟通
+    url: https://github.com/hust-open-atom-club
+    about: 组织与仓库相关事务，可到俱乐部组织主页查看

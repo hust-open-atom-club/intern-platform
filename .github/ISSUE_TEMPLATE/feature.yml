@@ -1,0 +1,50 @@
+name: 功能建议
+description: 提出改进想法或新功能需求
+title: "[建议] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        欢迎提改进建议。说清楚**使用场景**和**希望怎么更好**，比只写「希望加个功能」更容易落地。
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 相关模块
+      options:
+        - 学生端
+        - 导师端
+        - 组织 / 社区
+        - 组委会
+        - 项目展示 / 详情
+        - 文档 / 指南 / 协作流程
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 当前痛点
+      description: 现在哪里不好用？卡在哪一步？
+      placeholder: 例如：报问题时不知道该写哪些信息，Issue 描述五花八门，不好排查。
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望方案
+      description: 你希望平台或流程变成什么样？
+      placeholder: 例如：提供统一的 Issue 模板，让同学按模块、复现步骤填。
+    validations:
+      required: true
+
+  - type: textarea
+    id: extras
+    attributes:
+      label: 其他说明
+      description: 参考链接、竞品截图、优先级想法等（可选）
+    validations:
+      required: false

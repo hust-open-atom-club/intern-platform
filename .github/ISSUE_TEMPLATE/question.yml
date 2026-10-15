@@ -1,0 +1,40 @@
+name: 使用咨询
+description: 不清楚怎么用、权限怎么开、流程怎么走时提问
+title: "[咨询] "
+labels: ["question", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提问前可先看 [参与指南](https://intern.openatom.club/guide)。
+        若已确认是程序缺陷，请改用「问题反馈」模板。
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: 咨询类型
+      options:
+        - 账号 / 角色 / 邀请码
+        - 如何申请 / 审核 / 结项
+        - 导师或社区如何发布项目
+        - 仓库协作 / PR / 代码贡献
+        - 部署与本地开发
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: 你的问题
+      placeholder: 尽量写清你已经试过什么、卡在哪一步。
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 背景信息（可选）
+      description: 角色、社区名称、相关链接等
+    validations:
+      required: false

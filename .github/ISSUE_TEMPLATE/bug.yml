@@ -1,0 +1,107 @@
+name: 问题反馈
+description: 报告平台缺陷、显示异常、流程走不通等问题
+title: "[问题] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。请尽量把**复现步骤**和**期望结果**写清楚，方便同学排查。
+        安全相关（账号被盗、敏感数据泄露等）请勿在公开 Issue 里贴密钥/密码。
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 问题模块
+      description: 大致属于哪一块
+      options:
+        - 登录 / 注册 / 角色权限
+        - 项目列表 / 项目详情
+        - 学生申请 / 任务进展 / 结项
+        - 导师审核
+        - 组织工作台（社区）
+        - 组委会工作台
+        - 上传 / 文件 / 简历 PDF
+        - 页面显示 / Markdown / 样式
+        - 部署 / 访问不了
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: page-url
+    attributes:
+      label: 相关页面链接
+      description: 例如 https://intern.openatom.club/projects/23
+      placeholder: https://intern.openatom.club/...
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 现象描述
+      description: 实际看到了什么？和预期差在哪里？
+      placeholder: |
+        例如：项目详情里粘贴了 Markdown，标题和换行没有按格式显示，整段挤在一起。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从哪个入口点起，一步步怎么操作
+      placeholder: |
+        1. 用「组织」账号登录
+        2. 打开组织工作台 → 项目 → 修改详情
+        3. 粘贴 Markdown 后点重新发布
+        4. 打开项目详情页查看
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+      placeholder: 例如：详情应按 Markdown 渲染标题、列表，段落之间有换行间距。
+    validations:
+      required: true
+
+  - type: dropdown
+    id: role
+    attributes:
+      label: 你的角色
+      options:
+        - 学生
+        - 导师
+        - 社区管理员（组织）
+        - 组委会
+        - 未登录访客
+        - 其他 / 不便说明
+    validations:
+      required: true
+
+  - type: dropdown
+    id: browser
+    attributes:
+      label: 浏览器
+      options:
+        - Chrome / Edge
+        - Firefox
+        - Safari
+        - 手机浏览器
+        - 其他
+    validations:
+      required: false
+
+  - type: textarea
+    id: extras
+    attributes:
+      label: 补充信息
+      description: 可贴截图说明、控制台报错、大概发生时间等（请打码隐私信息）
+      placeholder: |
+        - 截图：可直接拖拽到本框
+        - 控制台错误：（如有）
+    validations:
+      required: false
