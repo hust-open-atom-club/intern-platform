@@ -11,7 +11,7 @@ KIND_TAGS: dict[str, str] = {
     "feedback": "【反馈】",
     "acceptance": "【验收】",
     "official": "【社区通知】",
-    "reward": "【奖励】",
+    "reward": "【实习申请】",
 }
 
 

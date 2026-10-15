@@ -10,8 +10,33 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# 项目根目录：intern-platform/
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+def _detect_project_root() -> Path:
+    """解析项目根目录。
+
+    pip install 后 ``__file__`` 在 site-packages 下，不能再用 parents[2]。
+    Docker 镜像把数据卷挂在 ``/app/data``，必须固定到 ``/app``，否则上传文件
+    会写进容器可写层，重建即丢失。
+    """
+    env = os.getenv("INTERN_PLATFORM_ROOT") or os.getenv("PROJECT_ROOT")
+    if env:
+        return Path(env).resolve()
+    if (Path("/app") / "pyproject.toml").is_file() and (Path("/app") / "data").exists():
+        return Path("/app")
+    here = Path(__file__).resolve()
+    # 源码布局：<root>/src/intern_platform/config.py
+    candidate = here.parents[2]
+    if (candidate / "pyproject.toml").is_file() or (candidate / "apps").is_dir():
+        return candidate
+    if Path("/app/data").exists():
+        return Path("/app")
+    return candidate
+
+
+# 项目根目录：源码仓库根，或 Docker 中的 /app
+PROJECT_ROOT = _detect_project_root()
+# 持久化数据目录（上传 / 备份 / 邮件日志等）；可用 DATA_ROOT 覆盖
+DATA_ROOT = Path(os.getenv("DATA_ROOT", str(PROJECT_ROOT / "data"))).resolve()
+DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 class Settings(BaseSettings):
@@ -76,11 +101,15 @@ class Settings(BaseSettings):
         return value
 
     def resolve_database_url(self) -> str:
-        """将相对 SQLite 路径解析为基于项目根的绝对路径。"""
+        """将相对 SQLite 路径解析为基于 DATA_ROOT 的绝对路径。"""
         url = self.database_url
         if self.db_driver == "sqlite" and url.startswith("sqlite:///./"):
             relative = url.removeprefix("sqlite:///./")
-            absolute = (PROJECT_ROOT / relative).resolve()
+            # ./data/xxx → DATA_ROOT/xxx；其它相对路径仍相对项目根
+            if relative.startswith("data/") or relative == "data":
+                absolute = (DATA_ROOT / relative.removeprefix("data/")).resolve()
+            else:
+                absolute = (PROJECT_ROOT / relative).resolve()
             absolute.parent.mkdir(parents=True, exist_ok=True)
             return f"sqlite:///{absolute.as_posix()}"
         return url

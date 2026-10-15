@@ -129,10 +129,32 @@ class SiteBody(BaseModel):
     books: list[dict] = Field(default_factory=list)
 
 
+_LOCAL_HEROES = {
+    "intern": "/heroes/hero-intern.jpg",
+    "process": "/heroes/hero-process.jpg",
+    "club": "/heroes/hero-club.jpg",
+}
+
+
+def _sanitize_slide_image(item: dict) -> dict:
+    """历史 Unsplash / 临时 SVG 占位改为站内实景图。"""
+    row = dict(item)
+    image = str(row.get("image") or "")
+    sid = str(row.get("id") or "")
+    low = image.lower()
+    if (
+        (not image)
+        or ("unsplash.com" in low)
+        or (low.endswith(".svg") and "/heroes/hero-" in low)
+    ):
+        row["image"] = _LOCAL_HEROES.get(sid, _LOCAL_HEROES["intern"])
+    return row
+
+
 @public_router.get("/slides")
 def public_slides(db: Session = Depends(get_db)) -> list[dict]:
     items = _load(db, KEYS["slides"], [])
-    return [item for item in items if item.get("live", True)]
+    return [_sanitize_slide_image(item) for item in items if item.get("live", True)]
 
 
 @public_router.get("/slides/{slide_id}")
@@ -141,7 +163,7 @@ def public_slide(slide_id: str, db: Session = Depends(get_db)) -> dict:
     hit = next((item for item in items if str(item.get("id")) == slide_id), None)
     if hit is None:
         raise HTTPException(status_code=404, detail="这张首页大图不存在")
-    return hit
+    return _sanitize_slide_image(hit)
 
 
 @public_router.get("/news")
@@ -635,6 +657,69 @@ def set_community_disabled(
     )
     db.commit()
     return {"ok": True}
+
+
+@router.get("/committee/communities/{community_id}/admin-password")
+def view_community_admin_password(
+    community_id: int,
+    auth: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, str | None]:
+    """组委会查看组织当前密码；不可在此重置，改密由社区自己完成。"""
+    _committee(auth)
+    from intern_platform.services.community_service import CommunityService
+
+    try:
+        return CommunityService(db).view_community_admin_password(auth, community_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+class ArchivePasswordBody(BaseModel):
+    password: str = Field(min_length=6, max_length=128)
+
+
+@router.post("/committee/communities/{community_id}/admin-password")
+def archive_community_admin_password(
+    community_id: int,
+    body: ArchivePasswordBody,
+    auth: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, str | None]:
+    """组委会把已知的当前密码写入存档，之后可反复查看（不改登录密码）。"""
+    _committee(auth)
+    from intern_platform.services.community_service import CommunityService
+
+    try:
+        return CommunityService(db).archive_community_admin_password(
+            auth, community_id, body.password
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/committee/communities/{community_id}/admin-password/reissue")
+def reissue_community_admin_password(
+    community_id: int,
+    auth: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, str | None]:
+    """仅未存档历史账号：补发新密码。已存档的账号不可在此改密。"""
+    _committee(auth)
+    from intern_platform.services.community_service import CommunityService
+
+    try:
+        return CommunityService(db).reissue_community_admin_password(auth, community_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/committee/communities/{community_id}/retire")

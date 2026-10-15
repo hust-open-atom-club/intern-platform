@@ -59,7 +59,7 @@ async function load(url: string) {
     const token = getStoredToken()
     if (token) headers.Authorization = `Bearer ${token}`
     const res = await fetch(withFileAuth(url), { credentials: 'same-origin', headers })
-    if (!res.ok) throw new Error('文档加载失败')
+    if (!res.ok) throw new Error(res.status === 404 ? '文档不存在' : `文档加载失败（${res.status}）`)
     const data = await res.arrayBuffer()
     doc = await pdfjs.getDocument({ data }).promise
     pageCount.value = doc.numPages

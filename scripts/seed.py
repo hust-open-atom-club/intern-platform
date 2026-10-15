@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""种子数据：演示账号 + 原有社区保留 + 追加真实开源案例社区。"""
+"""种子数据：演示登录账号 + 社区骨架。
+
+不再写入任何演示课题 / 申请；课题由导师在平台上真实发布。
+"""
 
 from __future__ import annotations
 
@@ -19,21 +22,12 @@ for p in (SRC, SCRIPTS):
 
 from intern_platform.db.session import SessionLocal  # noqa: E402
 from intern_platform.models import (  # noqa: E402
-    Application,
     Community,
     CommunityExtension,
     IntegrationSetting,
-    Project,
     Role,
     User,
     UserRole,
-)
-from project_briefs import (  # noqa: E402
-    AI_BRIEF,
-    DEVTOOLS_BRIEF,
-    DOCS_BRIEF,
-    MIRROR_BRIEF,
-    SPMV_BRIEF,
 )
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -180,48 +174,6 @@ def _ensure_extension(session, community_id: int, schema: str) -> None:
         ext.application_schema = schema
 
 
-def _upsert_first_project(
-    session,
-    *,
-    community_id: int,
-    mentor_id: int,
-    title: str,
-    summary: str,
-    description: str,
-    tech_stack: str,
-    difficulty: str,
-    repo_url: str,
-) -> Project:
-    proj = session.scalar(
-        select(Project).where(Project.community_id == community_id).order_by(Project.id.asc())
-    )
-    if not proj:
-        proj = Project(
-            community_id=community_id,
-            mentor_id=mentor_id,
-            title=title,
-            summary=summary,
-            description=description,
-            tech_stack=tech_stack,
-            difficulty=difficulty,
-            quota=2,
-            repo_url=repo_url,
-            status="published",
-        )
-        session.add(proj)
-        session.flush()
-    else:
-        proj.title = title
-        proj.summary = summary
-        proj.description = description
-        proj.tech_stack = tech_stack
-        proj.difficulty = difficulty
-        proj.repo_url = repo_url
-        proj.mentor_id = mentor_id
-        proj.status = "published"
-    return proj
-
-
 def _upsert_named_user(session, *, email: str, display_name: str, school: str, password_hash: str) -> User:
     user = session.scalar(select(User).where(User.email == email))
     if user is None:
@@ -366,9 +318,8 @@ def seed() -> None:
         admin = user_by_role["community_admin"]
         mentor = user_by_role["mentor"]
         committee = user_by_role["committee"]
-        student = user_by_role["student"]
 
-        # ----- 原有演示社区（保留） -----
+        # ----- 社区骨架（不创建任何演示课题） -----
         # 邀请码故意不可由 slug 推导（勿再用 {SLUG}-DEMO）
         community = _upsert_community(
             session,
@@ -389,34 +340,6 @@ def seed() -> None:
             session, user_id=mentor.id, role=role_by_code["mentor"], community_id=community.id
         )
         _ensure_extension(session, community.id, KERNEL_SCHEMA)
-        project = _upsert_first_project(
-            session,
-            community_id=community.id,
-            mentor_id=mentor.id,
-            title="SpMV 开源实习演示项目",
-            summary="稀疏矩阵向量乘开源贡献演示，打通申请到结项全链路",
-            description=SPMV_BRIEF,
-            tech_stack='["C语言","Python"]',
-            difficulty="medium",
-            repo_url="https://git.hust.openatom.club/demo/spmv",
-        )
-        app = session.scalar(
-            select(Application).where(
-                Application.project_id == project.id,
-                Application.student_id == student.id,
-            )
-        )
-        if not app:
-            session.add(
-                Application(
-                    project_id=project.id,
-                    student_id=student.id,
-                    statement="希望参与开源实习演示。",
-                    status="draft",
-                    current_node="none",
-                    version=0,
-                )
-            )
 
         mirror = _upsert_community(
             session,
@@ -432,20 +355,8 @@ def seed() -> None:
             reviewed_by=committee.id,
         )
         _ensure_extension(session, mirror.id, MIRROR_SCHEMA)
-        _upsert_first_project(
-            session,
-            community_id=mirror.id,
-            mentor_id=admin.id,
-            title="镜像同步策略优化",
-            summary="优化镜像同步策略并演示社区专属申请字段",
-            description=MIRROR_BRIEF,
-            tech_stack='["Shell脚本","Python"]',
-            difficulty="easy",
-            repo_url="https://git.hust.openatom.club/demo/mirror",
-        )
 
         all_more = [
-            # 原有额外社区
             {
                 "slug": "docs",
                 "name": "技术文档社区",
@@ -455,14 +366,6 @@ def seed() -> None:
                 "logo_url": "/logos/docs.svg",
                 "tags": '["文档","Markdown","Git"]',
                 "schema": KERNEL_SCHEMA,
-                "project": {
-                    "title": "俱乐部贡献指南改版",
-                    "summary": "梳理新人入门路径与仓库贡献规范",
-                    "description": DOCS_BRIEF,
-                    "tech_stack": '["Markdown","Git"]',
-                    "difficulty": "easy",
-                    "repo_url": "https://git.hust.openatom.club/demo/docs",
-                },
             },
             {
                 "slug": "devtools",
@@ -473,14 +376,6 @@ def seed() -> None:
                 "logo_url": "/logos/devtools.svg",
                 "tags": '["运维开发","Shell脚本","Docker"]',
                 "schema": KERNEL_SCHEMA,
-                "project": {
-                    "title": "实习平台本地一键启动脚本",
-                    "summary": "封装环境检查与服务拉起流程",
-                    "description": DEVTOOLS_BRIEF,
-                    "tech_stack": '["Python","Shell脚本","Docker"]',
-                    "difficulty": "medium",
-                    "repo_url": "https://git.hust.openatom.club/demo/devtools",
-                },
             },
             {
                 "slug": "ai-lab",
@@ -491,16 +386,7 @@ def seed() -> None:
                 "logo_url": "/logos/ailab.svg",
                 "tags": '["人工智能","深度学习","Python"]',
                 "schema": KERNEL_SCHEMA,
-                "project": {
-                    "title": "开源模型推理示例工程",
-                    "summary": "打通本地推理演示与文档",
-                    "description": AI_BRIEF,
-                    "tech_stack": '["Python","PyTorch"]',
-                    "difficulty": "hard",
-                    "repo_url": "https://git.hust.openatom.club/demo/ai-lab",
-                },
             },
-            # 新增开源案例（新 slug，不覆盖上面）
             {
                 "slug": "openeuler",
                 "name": "openEuler 社区",
@@ -511,14 +397,6 @@ def seed() -> None:
                 "logo_url": "/logos/openeuler.svg",
                 "tags": '["操作系统","编译器","嵌入式"]',
                 "schema": KERNEL_SCHEMA,
-                "project": {
-                    "title": "稀疏矩阵向量乘（SpMV）算子优化",
-                    "summary": "基于开源数值计算方向，完成 SpMV 性能优化与文档沉淀",
-                    "description": SPMV_BRIEF,
-                    "tech_stack": '["C语言","Python"]',
-                    "difficulty": "medium",
-                    "repo_url": "https://gitee.com/openeuler",
-                },
             },
             {
                 "slug": "opengauss",
@@ -530,14 +408,6 @@ def seed() -> None:
                 "logo_url": "/logos/opengauss.svg",
                 "tags": '["数据库","运维开发","C语言"]',
                 "schema": KERNEL_SCHEMA,
-                "project": {
-                    "title": "openGauss 新手贡献指南整理",
-                    "summary": "梳理仓库贡献规范、本地编译与文档索引",
-                    "description": DOCS_BRIEF,
-                    "tech_stack": '["Markdown","Git","文档"]',
-                    "difficulty": "easy",
-                    "repo_url": "https://gitee.com/opengauss",
-                },
             },
             {
                 "slug": "mindspore",
@@ -549,14 +419,6 @@ def seed() -> None:
                 "logo_url": "/logos/mindspore.svg",
                 "tags": '["人工智能","深度学习","Python"]',
                 "schema": KERNEL_SCHEMA,
-                "project": {
-                    "title": "昇思框架推理示例补全",
-                    "summary": "基于昇思框架打通本地推理演示与说明文档",
-                    "description": AI_BRIEF,
-                    "tech_stack": '["Python","人工智能"]',
-                    "difficulty": "hard",
-                    "repo_url": "https://gitee.com/mindspore",
-                },
             },
             {
                 "slug": "rtthread",
@@ -568,14 +430,6 @@ def seed() -> None:
                 "logo_url": "/logos/rtthread.svg",
                 "tags": '["实时操作系统","嵌入式","C语言"]',
                 "schema": KERNEL_SCHEMA,
-                "project": {
-                    "title": "RT-Thread 组件文档与示例补全",
-                    "summary": "完善组件使用说明并补充最小可运行示例",
-                    "description": DEVTOOLS_BRIEF,
-                    "tech_stack": '["C语言","嵌入式","文档"]',
-                    "difficulty": "medium",
-                    "repo_url": "https://gitee.com/rtthread",
-                },
             },
         ]
 
@@ -594,18 +448,6 @@ def seed() -> None:
                 reviewed_by=committee.id,
             )
             _ensure_extension(session, row.id, item.get("schema") or KERNEL_SCHEMA)
-            meta = item["project"]
-            _upsert_first_project(
-                session,
-                community_id=row.id,
-                mentor_id=admin.id,
-                title=meta["title"],
-                summary=meta["summary"],
-                description=meta["description"],
-                tech_stack=meta["tech_stack"],
-                difficulty=meta["difficulty"],
-                repo_url=meta["repo_url"],
-            )
 
         # 演示社区管理员仅保留「内核社区」管理权
         extras = session.scalars(

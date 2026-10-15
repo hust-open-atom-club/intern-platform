@@ -14,6 +14,12 @@ import {
   statusLabel,
 } from '@/utils/statusLabel'
 import { resolveCrumbs } from '@/utils/crumbTrail'
+import { handleStudentAppLoadError, rejectIfNotOwner } from '@/utils/studentAppAccess'
+import { useAuthStore } from '@/stores/auth'
+
+function goHomeFallback() {
+  window.location.replace(`${window.location.origin}/`)
+}
 
 type SideTab = 'guide' | 'feed' | 'result' | 'task'
 type DynSortKey =
@@ -25,11 +31,13 @@ type DynSortKey =
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 const app = ref<ApplicationOut | null>(null)
 const projectBrief = ref<ProjectOut | null>(null)
 const logs = ref<MessageOut[]>([])
 const taskDynamics = ref<TaskDynamicsRow[]>([])
 const error = ref('')
+const loading = ref(true)
 const actionMsg = ref('')
 const actionErr = ref('')
 const busy = ref(false)
@@ -116,7 +124,17 @@ const canWithdraw = computed(() =>
     'selected',
     'in_progress',
     'final_rejected',
+    // 已提交验收、验收审核中仍可放弃（组委会终审/已结项不可）
+    'final_submitted',
+    'mentor_final_review',
+    'community_final_review',
   ].includes(app.value?.status || ''),
+)
+
+const withdrawMessage = computed(() =>
+  acceptancePending.value
+    ? '当前验收还在审核中。确定放弃？放弃后验收作废，名额将释放，不能再继续这项任务。'
+    : '确定放弃接取该任务？放弃后名额将释放，不能再继续这项任务。',
 )
 
 const phase = computed(() => {
@@ -130,9 +148,8 @@ const phase = computed(() => {
 const reviewPipe = computed(() => {
   const s = app.value?.status || ''
   const stages = [
-    { key: 'mentor', label: '导师', state: 'pending' as 'done' | 'current' | 'pending' | 'fail' },
-    { key: 'community', label: '社区', state: 'pending' as 'done' | 'current' | 'pending' | 'fail' },
-    { key: 'committee', label: '组委会', state: 'pending' as 'done' | 'current' | 'pending' | 'fail' },
+    { key: 'mentor', label: '导师审核', state: 'pending' as 'done' | 'current' | 'pending' | 'fail' },
+    { key: 'selected', label: '中选', state: 'pending' as 'done' | 'current' | 'pending' | 'fail' },
   ]
   if (
     [
@@ -156,13 +173,9 @@ const reviewPipe = computed(() => {
     return stages
   }
   if (['draft', 'submitted', 'mentor_review'].includes(s)) stages[0].state = 'current'
-  else if (s === 'community_review') {
+  else if (s === 'community_review' || s === 'committee_review') {
     stages[0].state = 'done'
     stages[1].state = 'current'
-  } else if (s === 'committee_review') {
-    stages[0].state = 'done'
-    stages[1].state = 'done'
-    stages[2].state = 'current'
   }
   return stages
 })
@@ -196,7 +209,7 @@ const personalDynamics = computed<DynRow[]>(() => {
         statusTone: 'step',
       })
     } else if (kind === 'reward') {
-      /* 奖励申请在单独页面查看 */
+      /* 实习申请在单独页面查看 */
     } else if (kind === 'feedback' || kind === 'note') {
       const body = String(m.body || '').trim()
       if (body) feedbackPool.push({ id: m.id, at: m.created_at, body })
@@ -489,8 +502,15 @@ async function load() {
   error.value = ''
   actionMsg.value = ''
   actionErr.value = ''
+  loading.value = true
   try {
+    if (auth.token && !auth.user) await auth.fetchMe()
     const { data } = await api.get<ApplicationOut>(`/applications/${appId.value}`)
+    if (rejectIfNotOwner(data, auth.user?.id)) {
+      app.value = null
+      error.value = '这不是你的任务进度，正在返回首页…'
+      return
+    }
     let brief: ProjectOut | null = null
     if (['rejected', 'withdrawn'].includes(data.status)) {
       try {
@@ -525,7 +545,10 @@ async function load() {
     await loadLogs()
     if (sideTab.value === 'feed') await loadDynamics()
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '加载失败'
+    app.value = null
+    error.value = handleStudentAppLoadError(e)
+  } finally {
+    loading.value = false
   }
 }
 
@@ -568,13 +591,16 @@ onMounted(load)
     <ConfirmDialog
       v-model:open="withdrawOpen"
       title="放弃任务"
-      message="确定放弃接取该任务？放弃后名额将释放，不能再继续这项任务。"
+      :message="withdrawMessage"
       confirm-text="确认放弃"
       cancel-text="再想想"
       danger
       @confirm="withdrawApp"
     />
-    <p v-if="error" class="error">{{ error }}</p>
+    <div v-if="error || (!loading && !app)" class="denied-box">
+      <p class="error">{{ error || '无法打开该任务进度' }}</p>
+      <button class="btn primary" type="button" @click="goHomeFallback">返回首页</button>
+    </div>
 
     <template v-else-if="app">
       <PageCrumb :items="crumbs" />
@@ -740,14 +766,14 @@ onMounted(load)
                     type="button"
                     disabled
                   >
-                    {{ rewardState === 'approved' ? '奖励已通过' : '奖励审核中' }}
+                    {{ rewardState === 'approved' ? '实习申请已通过' : '实习申请审核中' }}
                   </button>
                   <RouterLink
                     v-else-if="canApplyReward"
                     class="btn primary"
-                    :to="`/student/applications/${app.id}/reward`"
+                    :to="`/student/applications/${app.id}/internship`"
                   >
-                    {{ rewardState === 'rejected' ? '重新申请奖励' : '申请奖励' }}
+                    {{ rewardState === 'rejected' ? '重新申请实习' : '申请实习' }}
                   </RouterLink>
                   <template v-else-if="phase >= 2 || inTaskDev">
                     <RouterLink
@@ -801,7 +827,7 @@ onMounted(load)
               </div>
 
               <p v-if="acceptancePending" class="hint-warn">
-                当前有验收在审核中（验收中），暂不可再次「提交验收」；可继续「更新进展」。未通过后可再交。
+                当前有验收在审核中（验收中），暂不可再次「提交验收」；可继续「更新进展」，也可「放弃任务」。未通过后可再交验收。
               </p>
 
               <div class="materials">
@@ -909,7 +935,7 @@ onMounted(load)
       <p v-if="actionMsg" class="success-msg">{{ actionMsg }}</p>
       <p v-if="actionErr" class="error">{{ actionErr }}</p>
     </template>
-    <p v-else class="muted">加载中…</p>
+    <p v-else-if="loading" class="muted">加载中…</p>
   </div>
 </template>
 
@@ -919,6 +945,20 @@ onMounted(load)
   width: 100%;
   padding-left: clamp(0.75rem, 2vw, 1.5rem);
   padding-right: clamp(0.75rem, 2vw, 1.5rem);
+}
+.denied-box {
+  margin: 2.5rem auto;
+  max-width: 28rem;
+  padding: 1.5rem 1.25rem;
+  text-align: center;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+}
+.denied-box .error {
+  margin: 0 0 1rem;
+  color: #b91c1c;
+  font-size: 1rem;
 }
 .ospp-back {
   margin: 0 0 0.85rem;

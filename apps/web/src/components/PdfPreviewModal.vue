@@ -70,7 +70,7 @@ async function loadPdf(url: string) {
     const token = getStoredToken()
     if (token) headers.Authorization = `Bearer ${token}`
     const res = await fetch(withFileAuth(url), { credentials: 'same-origin', headers })
-    if (!res.ok) throw new Error(`加载失败（${res.status}）`)
+    if (!res.ok) throw new Error(res.status === 404 ? '文档不存在' : `加载失败（${res.status}）`)
     const buf = await res.arrayBuffer()
     const blob = new Blob([buf], { type: 'application/pdf' })
     objectUrl = URL.createObjectURL(blob)

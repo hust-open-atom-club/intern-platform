@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { withFileAuth } from '@/api/client'
 import type { CommunityIntroBody, IntroBlock } from '@/api/types'
 
 const props = defineProps<{
@@ -22,8 +23,9 @@ function mediaSrc(url: string) {
   if (!u) return ''
   // 已是绝对地址或 blob
   if (/^(https?:|blob:|data:)/i.test(u)) return u
-  // 站点相对路径
-  return u.startsWith('/') ? u : `/${u}`
+  const path = u.startsWith('/') ? u : `/${u}`
+  // 本站上传文件：登录预览时带 token；已写入社区的公开图也可匿名
+  return withFileAuth(path) || path
 }
 
 function embedSrc(url: string): string | null {

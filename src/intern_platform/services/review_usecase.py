@@ -134,21 +134,29 @@ def resolve_actions(
             raise AuthorizationError("当前节点/角色不可结项驳回")
         raise AuthorizationError(f"未知 decision: {decision}")
 
-    # 选拔审核
+    # 选拔审核：导师通过后自动过社区/组委会节点，直接中选（组织端不再单独审核）
     if decision == "approve":
         if actor_role == "mentor":
             if status_value == "submitted":
-                return ["start_mentor_review", "approve_mentor"]
+                return [
+                    "start_mentor_review",
+                    "approve_mentor",
+                    "approve_community",
+                    "approve_committee",
+                ]
             if status_value == "mentor_review":
-                return ["approve_mentor"]
+                return ["approve_mentor", "approve_community", "approve_committee"]
             raise AuthorizationError(f"导师不可在状态 {status_value} 通过")
         if actor_role == "community_admin":
             if status_value == "community_review":
-                # 社区通过后组委会直接接收中选结果，不再单独点一次通过
+                # 兼容历史滞留单：社区代审仍可推进到中选
                 return ["approve_community", "approve_committee"]
             raise AuthorizationError(f"社区管理员不可在状态 {status_value} 通过")
         if actor_role == "committee":
-            if status_value == "committee_review":
+            if status_value in ("committee_review", "community_review"):
+                # community_review 滞留时组委会也可代推到中选
+                if status_value == "community_review":
+                    return ["approve_community", "approve_committee"]
                 return ["approve_committee"]
             raise AuthorizationError(f"组委会不可在状态 {status_value} 通过")
         raise AuthorizationError("无审核角色")
@@ -471,54 +479,32 @@ class ReviewUseCase:
                     if commit:
                         self.session.commit()
                     student_name = student.display_name if student is not None else "学生"
-                    if last.to_status == "community_review" and project is not None:
+                    if last.to_status == "community_final_review" and project is not None:
                         from intern_platform.services.message_service import community_admin_ids
 
                         for user_id in community_admin_ids(self.session, project.community_id):
                             NotificationService(self.session).create(
                                 user_id=user_id,
-                                title="待社区审核中选",
-                                body=f"「{title}」{student_name} 导师已通过设计，请社区审核；通过后组委会会自动接收中选。",
-                                kind="community_review",
+                                title="验收已通过，等待学生申请实习",
+                                body=(
+                                    f"「{title}」{student_name} 导师已通过验收。"
+                                    "学生提交实习申请后，请在「实习申请」中审核；"
+                                    "通过后组委会会自动计入结项名单。"
+                                ),
+                                kind="app_reward",
                                 project_id=application.project_id,
                                 application_id=application.id,
                             )
                         if commit:
                             self.session.commit()
-                    if last.to_status == "community_final_review" and project is not None:
-                        from intern_platform.services.message_service import (
-                            committee_user_ids,
-                            community_admin_ids,
-                        )
-
-                        for user_id in community_admin_ids(self.session, project.community_id):
-                            NotificationService(self.session).create(
-                                user_id=user_id,
-                                title="待报送结项材料",
-                                body=f"「{title}」{student_name} 导师已通过验收，请社区报送；报送后组委会会自动接收。",
-                                kind="community_final",
-                                project_id=application.project_id,
-                                application_id=application.id,
-                            )
-                        for user_id in committee_user_ids(self.session):
-                            NotificationService(self.session).create(
-                                user_id=user_id,
-                                title="导师已通过验收",
-                                body=f"「{title}」{student_name} 导师已通过验收，待社区报送后自动计入组委会结项名单。",
-                                kind="committee_roster",
-                                project_id=application.project_id,
-                                application_id=application.id,
-                            )
-                        if commit:
-                            self.session.commit()
-                    if last.to_status == "selected" and project is not None and actor_role == "community_admin":
+                    if last.to_status == "selected" and project is not None:
                         from intern_platform.services.message_service import committee_user_ids
 
                         for user_id in committee_user_ids(self.session):
                             NotificationService(self.session).create(
                                 user_id=user_id,
-                                title="社区已通过，组委会已接收中选",
-                                body=f"「{title}」{student_name} 经社区审核通过，已自动计入中选。",
+                                title="导师已通过，已计入中选",
+                                body=f"「{title}」{student_name} 经导师审核通过，已自动计入中选。",
                                 kind="selection",
                                 project_id=application.project_id,
                                 application_id=application.id,

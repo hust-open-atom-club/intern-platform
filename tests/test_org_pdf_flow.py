@@ -284,7 +284,12 @@ def test_mentor_reject_from_submitted(client_and_db) -> None:
         status_value="submitted",
         actor_role="mentor",
     )
-    assert approve == ["start_mentor_review", "approve_mentor"]
+    assert approve == [
+        "start_mentor_review",
+        "approve_mentor",
+        "approve_community",
+        "approve_committee",
+    ]
 
 
 def test_apply_without_pdfs_rejected(client_and_db) -> None:

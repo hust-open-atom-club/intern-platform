@@ -79,21 +79,23 @@ def patch_me(
     auth: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> UserOut:
-    return AuthService(db).update_me(auth, body)
+    try:
+        return AuthService(db).update_me(auth, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/me/password")
+@router.post("/me/password", response_model=TokenResponse)
 def change_password(
     body: ChangePasswordRequest,
     auth: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
     ledger: LedgerRequestContext = Depends(get_ledger_context),
-) -> dict[str, bool]:
+) -> TokenResponse:
     try:
-        AuthService(db).change_password(auth, body, ledger)
+        return AuthService(db).change_password(auth, body, ledger)
     except PermissionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True}
 
 @router.post("/roles", response_model=UserOut)
 def grant_role(

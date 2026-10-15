@@ -48,12 +48,12 @@ const reading = ref<NotificationOut | null>(null)
 function pretty(body?: string | null) {
   const text = body || ''
   const names: Record<string, string> = {
-    community_final_review: '导师已通过验收，待社区报送',
+    community_final_review: '导师已通过验收，可申请实习',
     committee_final_review: '组委会结项审核中',
     mentor_final_review: '导师验收中',
     final_submitted: '已提交验收',
     final_rejected: '验收失败',
-    community_review: '社区审核中',
+    community_review: '名额已预留',
     committee_review: '组委会审核中',
     mentor_review: '导师审核中',
     in_progress: '开发中',

@@ -13,7 +13,7 @@ withDefaults(
   }>(),
   {
     variant: 'student',
-    kicker: '华科开源原子',
+    kicker: '华科大开源实习管理系统',
     lead: '',
     points: () => [],
     homeTo: '/',
@@ -99,8 +99,8 @@ withDefaults(
   --auth-orb-c: rgba(59, 130, 246, 0.16);
   --auth-grid: rgba(37, 99, 235, 0.07);
   --auth-node: rgba(29, 78, 216, 0.22);
-  --auth-display: 'Noto Serif SC', 'Songti SC', serif;
-  --auth-sans: 'IBM Plex Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --auth-display: 'Songti SC', 'Noto Serif SC', 'STSong', serif;
+  --auth-sans: 'PingFang SC', 'Microsoft YaHei', 'IBM Plex Sans', sans-serif;
 
   position: relative;
   isolation: isolate;
@@ -110,7 +110,7 @@ withDefaults(
   overflow: hidden;
   background: linear-gradient(165deg, #e8f0fb 0%, #f4f7fb 42%, #eef4fa 72%, #f8fafc 100%);
   font-family: var(--auth-sans);
-  animation: page-in 0.45s ease both;
+  animation: page-in 0.22s ease both;
 }
 
 .auth-page.is-mentor {
@@ -306,7 +306,7 @@ withDefaults(
     0 24px 60px rgba(15, 39, 68, 0.12),
     0 0 0 1px rgba(255, 255, 255, 0.55) inset;
   backdrop-filter: blur(14px) saturate(1.15);
-  animation: shell-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: shell-up 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .auth-brand {

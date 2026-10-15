@@ -6,9 +6,16 @@ import type { ApplicationOut, MessageOut } from '@/api/types'
 import PageCrumb from '@/components/PageCrumb.vue'
 import ZipDropZone from '@/components/ZipDropZone.vue'
 import AgreementDialog from '@/components/AgreementDialog.vue'
+import { handleStudentAppLoadError, rejectIfNotOwner } from '@/utils/studentAppAccess'
+import { useAuthStore } from '@/stores/auth'
+
+/** 静态模板：apps/web/public/templates/实习任务书模板.docx */
+const TASK_BOOK_URL = '/templates/实习任务书模板.docx'
+const TASK_BOOK_NAME = '实习任务书模板.docx'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 const app = ref<ApplicationOut | null>(null)
 const sent = ref<MessageOut | null>(null)
 const text = ref('')
@@ -21,10 +28,10 @@ const agreed = ref(false)
 const agreeOpen = ref(false)
 const busy = ref(false)
 const error = ref('')
-const rewardTerms = [
-  '一、本协议适用于验收通过后向本社区申请奖励。ZIP 和联系方式只交给该项目所属社区的管理员，组委会不接收、也不代发奖励。',
-  '二、联系方式至少填写一项，只用于通知奖励发放。请填写本人正在使用的手机、邮箱或其他联系方式，不要填写他人信息。',
-  '三、ZIP 未交、没有联系方式，或未同意本协议，不能提交。说明可以不写。勾选同意并提交，即表示你确认材料真实，并授权平台按上述范围使用。',
+const internshipTerms = [
+  '一、本协议适用于导师验收通过后，向本社区申请实习认定。请下载《实习任务书》模板填写，并与 PR、Issue 等材料一并打成 ZIP 提交；联系方式一并交给该项目所属社区管理员审核。社区通过后，组委会自动计入结项名单。',
+  '二、联系方式至少填写一项，只用于社区与你联系实习认定事宜。请填写本人正在使用的手机、邮箱或其他联系方式，不要填写他人信息。',
+  '三、ZIP 未交、没有联系方式，或未同意本协议，不能提交。ZIP 中须包含已填写的实习任务书，以及 PR、Issue 相关材料（截图或链接清单）。勾选同意并提交，即表示你确认材料真实，并授权平台按上述范围使用。',
 ]
 
 const id = () => String(route.params.id)
@@ -34,9 +41,9 @@ const allowed = computed(() =>
 const crumbs = computed(() => [
   { label: '我的项目', to: '/projects?tab=mine' },
   { label: app.value?.project_title || `申请 #${id()}`, to: `/student/applications/${id()}?tab=task` },
-  { label: '申请奖励' },
+  { label: '申请实习' },
 ])
-const zipLabel = computed(() => sent.value?.attachment_name || '证明材料.zip')
+const zipLabel = computed(() => sent.value?.attachment_name || '实习申请材料.zip')
 const hasContact = computed(() => [phone.value, email.value, extra.value].some((item) => item.trim()))
 const ready = computed(() => !!zipUrl.value && hasContact.value && agreed.value)
 const canSubmit = computed(() => ready.value && !busy.value)
@@ -47,11 +54,22 @@ function acceptTerms() {
 
 async function load() {
   error.value = ''
-  const { data } = await api.get<ApplicationOut>(`/applications/${id()}`)
-  app.value = data
-  const { data: msgs } = await api.get<MessageOut[]>(`/applications/${id()}/messages`)
-  const latest = [...msgs].reverse().find((item) => item.kind === 'reward')
-  sent.value = latest && latest.reward_status !== 'rejected' ? latest : null
+  try {
+    if (auth.token && !auth.user) await auth.fetchMe()
+    const { data } = await api.get<ApplicationOut>(`/applications/${id()}`)
+    if (rejectIfNotOwner(data, auth.user?.id)) {
+      app.value = null
+      error.value = '这不是你的任务进度，正在返回首页…'
+      return
+    }
+    app.value = data
+    const { data: msgs } = await api.get<MessageOut[]>(`/applications/${id()}/messages`)
+    const latest = [...msgs].reverse().find((item) => item.kind === 'reward')
+    sent.value = latest && latest.reward_status !== 'rejected' ? latest : null
+  } catch (e: unknown) {
+    app.value = null
+    error.value = handleStudentAppLoadError(e)
+  }
 }
 
 async function submit() {
@@ -71,7 +89,7 @@ async function submit() {
       body,
       kind: 'reward',
       attachment_url: zipUrl.value,
-      attachment_name: zipName.value || '证明材料.zip',
+      attachment_name: zipName.value || '实习申请材料.zip',
     })
     await router.push(`/student/applications/${id()}?tab=task`)
   } catch (e: unknown) {
@@ -96,32 +114,48 @@ onMounted(() => void load().catch((e: unknown) => {
   <div class="page reward">
     <AgreementDialog
       v-model:open="agreeOpen"
-      title="奖励申请协议"
-      :paragraphs="rewardTerms"
+      title="实习申请协议"
+      :paragraphs="internshipTerms"
       @agree="acceptTerms"
     />
     <PageCrumb :items="crumbs" />
     <header class="head">
       <div>
-        <h1>申请奖励</h1>
-        <p>{{ app?.project_title || '当前任务' }}。导师验收通过后，提交关闭证明和联系方式。</p>
+        <h1>申请实习</h1>
+        <p>
+          {{ app?.project_title || '当前任务' }}。导师验收通过后，下载任务书填写，连同 PR、Issue
+          材料打包提交给社区。
+        </p>
       </div>
     </header>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="!app && !error" class="muted">加载中…</p>
     <template v-else-if="app">
-    <p v-if="!allowed" class="error">还没有验收通过，不能申请奖励。</p>
+    <p v-if="!allowed" class="error">还没有验收通过，不能申请实习。</p>
     <article v-else-if="sent" class="card done">
-      <h2>已经提交过奖励申请</h2>
+      <h2>已经提交过实习申请</h2>
       <p>{{ sent.body }}</p>
       <a v-if="sent.attachment_url" class="file" :href="withFileAuth(sent.attachment_url)" download>{{ zipLabel }}</a>
       <RouterLink class="btn" :to="`/student/applications/${id()}?tab=task`">返回我的项目</RouterLink>
     </article>
     <form v-else @submit.prevent="submit">
+      <section class="card steps">
+        <h2>怎么准备材料</h2>
+        <ol>
+          <li>
+            下载
+            <a class="file" :href="TASK_BOOK_URL" :download="TASK_BOOK_NAME">{{ TASK_BOOK_NAME }}</a>
+            ，按模板填写（文件名可改成带上你的姓名）。
+          </li>
+          <li>整理本课题相关的 PR、Issue 材料（关闭证明、截图或链接清单）。</li>
+          <li>把<strong>已填写的实习任务书</strong>与 PR、Issue 材料打成一个 ZIP 上传（不超过 100MB）。</li>
+        </ol>
+        <a class="btn download" :href="TASK_BOOK_URL" :download="TASK_BOOK_NAME">下载实习任务书模板</a>
+      </section>
       <div class="split">
       <section class="card">
-        <h2><em class="must">*</em>关闭证明</h2>
-        <p class="hint">把 Issue 和 PR 已关闭的截图、链接清单打成一个 ZIP。只接受 zip，不超过 100MB。</p>
+        <h2><em class="must">*</em>实习申请材料（ZIP）</h2>
+        <p class="hint">ZIP 内须包含：填写好的实习任务书 + PR / Issue 相关材料。只接受 zip，不超过 100MB。</p>
         <ZipDropZone
           v-model:url="zipUrl"
           v-model:name="zipName"
@@ -134,13 +168,13 @@ onMounted(() => void load().catch((e: unknown) => {
             v-model="text"
             rows="8"
             maxlength="800"
-            placeholder="列出已关闭的 Issue、PR，以及各自的链接和关闭情况"
+            placeholder="可列出已关闭的 Issue、PR 链接，以及任务书放在 ZIP 里的文件名"
           />
         </label>
       </section>
       <section class="card">
         <h2><em class="must">*</em>联系方式</h2>
-        <p class="hint">手机、邮箱、其他至少填写一项。</p>
+        <p class="hint">手机、邮箱、其他至少填写一项，便于社区联系你。</p>
         <label>
           手机
           <input v-model="phone" type="tel" maxlength="32" placeholder="手机号" />
@@ -160,15 +194,15 @@ onMounted(() => void load().catch((e: unknown) => {
           <input type="checkbox" :checked="agreed" disabled />
           <span>
             <em class="must">*</em>我已阅读并同意
-            <button type="button" class="as-link" @click="agreeOpen = true">《奖励申请协议》</button>
+            <button type="button" class="as-link" @click="agreeOpen = true">《实习申请协议》</button>
             。点开协议并同意后才能提交。
           </span>
         </label>
         <div class="acts">
-          <button class="btn" type="submit" :disabled="!canSubmit">{{ busy ? '提交中…' : '提交奖励申请' }}</button>
+          <button class="btn" type="submit" :disabled="!canSubmit">{{ busy ? '提交中…' : '提交实习申请' }}</button>
           <RouterLink class="btn ghost" :to="`/student/applications/${id()}?tab=task`">返回</RouterLink>
         </div>
-        <p v-if="!ready" class="hint">需上传 ZIP、填写至少一项联系方式，并同意协议。</p>
+        <p v-if="!ready" class="hint">需上传含任务书与 PR/Issue 材料的 ZIP、填写至少一项联系方式，并同意协议。</p>
       </div>
     </form>
     </template>
@@ -192,6 +226,18 @@ onMounted(() => void load().catch((e: unknown) => {
   color: #64748b;
   line-height: 1.6;
 }
+.steps ol {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: #334155;
+  line-height: 1.7;
+}
+.steps li + li { margin-top: 0.35rem; }
+.btn.download {
+  align-self: flex-start;
+  margin-top: 4px;
+  background: #0f766e;
+}
 .split {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.8fr);
@@ -208,6 +254,7 @@ onMounted(() => void load().catch((e: unknown) => {
   flex-direction: column;
   gap: 12px;
 }
+.card.steps { margin-top: 16px; }
 .card h2 {
   margin: 0;
   color: #1e3a5f;

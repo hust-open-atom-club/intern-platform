@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class RoleOut(BaseModel):
@@ -23,6 +23,7 @@ class UserOut(BaseModel):
     gitee_id: str | None = None
     gitlink_id: str | None = None
     oauth_avatars: dict[str, str] = Field(default_factory=dict)
+    avatar_url: str | None = None
     member_no: str | None = None
     bio: str | None = None
     phone: str | None = None
@@ -67,11 +68,19 @@ class UserUpdateRequest(BaseModel):
     homepage_url: str | None = None
     contact_email: str | None = None
     city: str | None = None
+    avatar_url: str | None = None
 
 
 class ChangePasswordRequest(BaseModel):
-    old_password: str
+    old_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(min_length=6, max_length=128)
+
+    @field_validator("old_password", "new_password", mode="before")
+    @classmethod
+    def _strip_pwd(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
 
 class RoleGrantRequest(BaseModel):

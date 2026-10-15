@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import api from '@/api/client'
+import api, { withFileAuth } from '@/api/client'
 
 const props = withDefaults(
   defineProps<{
@@ -22,7 +22,8 @@ const busy = ref(false)
 const err = ref('')
 const inputRef = ref<HTMLInputElement | null>(null)
 
-const preview = computed(() => props.modelValue || '')
+/** 上传后尚未写入社区时图片仍需登录；img 不能带 Authorization，用 query token */
+const preview = computed(() => withFileAuth(props.modelValue) || props.modelValue || '')
 
 function pick() {
   inputRef.value?.click()

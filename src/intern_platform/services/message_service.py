@@ -161,16 +161,16 @@ class MessageService:
             )
         elif kind == "reward":
             if not is_student:
-                raise PermissionError("仅学生可申请奖励")
+                raise PermissionError("仅学生可申请实习")
             if app.status not in (
                 "community_final_review",
                 "committee_final_review",
                 "completed",
             ):
-                raise ValueError("导师验收通过后才能申请奖励")
+                raise ValueError("导师验收通过后才能申请实习")
             attachment = require_safe_upload_url(
                 (body.attachment_url or "").strip() or None,
-                field="奖励附件",
+                field="实习申请附件",
                 owner_user_id=auth.id,
             )
             if not attachment:
@@ -184,7 +184,7 @@ class MessageService:
                     continue
                 decision = str(unpack_deliverable(old.body).get("decision") or "pending")
                 if decision != "rejected":
-                    raise ValueError("已经申请过奖励，不能重复提交")
+                    raise ValueError("已经提交过实习申请，不能重复提交")
             lines = [line.strip() for line in (body.body or "").splitlines() if line.strip()]
             contacted = any(
                 line.startswith(prefix) and line.removeprefix(prefix).strip()
@@ -265,13 +265,13 @@ class MessageService:
         note: str | None,
         ledger: LedgerRequestContext | None = None,
     ) -> None:
-        """社区通过或驳回学生的奖励申请，并通知学生。"""
+        """社区通过或驳回学生的实习申请；通过后自动结项并通知组委会。"""
         app = self.session.get(Application, application_id)
         if app is None:
             raise LookupError("申请不存在")
         project = self.session.get(Project, app.project_id)
         if project is None or not auth.has_community_role("community_admin", project.community_id):
-            raise PermissionError("仅本社区可处理奖励申请")
+            raise PermissionError("仅本社区可处理实习申请")
         if decision not in ("approved", "rejected"):
             raise ValueError("只能通过或驳回")
         reason = (note or "").strip()
@@ -290,8 +290,8 @@ class MessageService:
                 target = msg
                 break
         if target is None:
-            raise LookupError("没有待处理的奖励申请")
-        before = {"decision": "pending", "message_id": target.id}
+            raise LookupError("没有待处理的实习申请")
+        before = {"decision": "pending", "message_id": target.id, "status": app.status}
         payload = {
             "text": str(parsed.get("text") or ""),
             "design_doc_url": str(parsed.get("design_doc_url") or ""),
@@ -303,9 +303,14 @@ class MessageService:
         }
         target.body = pack_message("reward", json.dumps(payload, ensure_ascii=False))
         self.session.add(target)
-        title = "社区已通过奖励申请" if decision == "approved" else "社区驳回了奖励申请"
-        detail = reason or "请等待社区通知发放。"
-        NotificationService(self.session).create(
+        ns = NotificationService(self.session)
+        title = "社区已通过实习申请" if decision == "approved" else "社区驳回了实习申请"
+        detail = reason or (
+            "社区已通过，组委会已自动计入结项名单。实习认定由社区另行通知。"
+            if decision == "approved"
+            else "请按社区说明修改后重新申请。"
+        )
+        ns.create(
             user_id=app.student_id,
             title=title,
             body=f"「{project.title}」{detail}",
@@ -313,6 +318,78 @@ class MessageService:
             project_id=app.project_id,
             application_id=app.id,
         )
+        completed = False
+        if decision == "approved" and app.status == "community_final_review":
+            from intern_platform.services.application_workflow import (
+                ApplicationWorkflowService,
+                TransitionContext,
+            )
+
+            key_base = (
+                (ledger.idempotency_key if ledger and ledger.idempotency_key else None)
+                or f"reward-approve-{application_id}-{target.id}"
+            )
+            lines = ["社区通过实习申请后自动结项"]
+            text = str(payload.get("text") or "").strip()
+            if text:
+                lines.append(text)
+            attach = str(payload.get("attachment_url") or "").strip()
+            if attach:
+                lines.append(
+                    f"证明材料：{payload.get('attachment_name') or '材料'} {attach}"
+                )
+            comment = "\n".join(lines)[:2000]
+            workflow = ApplicationWorkflowService(self.session)
+            mid = workflow.transition_by_id(
+                application_id,
+                TransitionContext(
+                    actor_id=auth.id,
+                    action="submit_community_final",
+                    actor_role="community_admin",
+                    comment=comment,
+                    request_id=ledger.request_id if ledger else None,
+                    correlation_id=ledger.request_id if ledger else None,
+                    idempotency_key=f"{key_base}#community_final",
+                    trace_id=ledger.trace_id if ledger else None,
+                    ip=ledger.ip if ledger else None,
+                    user_agent=ledger.user_agent if ledger else None,
+                ),
+                commit=False,
+            )
+            workflow.transition(
+                mid.application,
+                TransitionContext(
+                    actor_id=auth.id,
+                    action="approve_committee_final",
+                    actor_role="community_admin",
+                    comment="社区通过实习申请后自动计入组委会结项名单",
+                    request_id=ledger.request_id if ledger else None,
+                    correlation_id=ledger.request_id if ledger else None,
+                    idempotency_key=f"{key_base}#auto_committee",
+                    trace_id=ledger.trace_id if ledger else None,
+                    ip=ledger.ip if ledger else None,
+                    user_agent=ledger.user_agent if ledger else None,
+                    expected_version=mid.application.version,
+                ),
+            )
+            completed = True
+            ns.create(
+                user_id=app.student_id,
+                title="结项已完成",
+                body=f"项目「{project.title}」社区已通过实习申请，组委会已自动接收，状态为已结项。",
+                kind="review_progress",
+                project_id=app.project_id,
+                application_id=app.id,
+            )
+            for uid in committee_user_ids(self.session):
+                ns.create(
+                    user_id=uid,
+                    title="社区已通过实习申请，已自动计入结项",
+                    body=f"「{project.title}」申请 #{app.id} 已计入结项名单：{comment[:140]}",
+                    kind="committee_roster",
+                    project_id=app.project_id,
+                    application_id=app.id,
+                )
         self.audits.create(
             actor_id=auth.id,
             actor_role="community_admin",
@@ -320,7 +397,12 @@ class MessageService:
             resource_type="application",
             resource_id=app.id,
             before=before,
-            after={"decision": decision, "note": reason, "message_id": target.id},
+            after={
+                "decision": decision,
+                "note": reason,
+                "message_id": target.id,
+                "completed": completed,
+            },
             outcome="SUCCESS",
             request_id=ledger.request_id if ledger else None,
             trace_id=ledger.trace_id if ledger else None,
@@ -339,7 +421,7 @@ class MessageService:
             "acceptance": "学生提交了验收材料",
             "feedback": "导师回复了反馈",
             "official": "社区发来重要通知",
-            "reward": "学生提交了奖励申请",
+            "reward": "学生提交了实习申请",
         }
         title = title_map.get(kind)
         if not title:

@@ -9,6 +9,20 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // pdfjs worker 以 .mjs 发出时，部分 nginx 默认 MIME 为 octet-stream，浏览器会拒绝 module worker
+        assetFileNames: (assetInfo) => {
+          const name = assetInfo.name ?? ''
+          if (name.endsWith('.mjs')) {
+            return 'assets/[name]-[hash].js'
+          }
+          return 'assets/[name]-[hash][extname]'
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     // 开发态禁止磁盘强缓存：重启后旧 deps 与 Chrome 缓存错位会触发 ERR_CACHE_READ_FAILURE

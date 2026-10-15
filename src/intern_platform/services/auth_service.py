@@ -64,6 +64,7 @@ def user_to_out(user: User, roles: list | None = None) -> UserOut:
         gitee_id=getattr(user, "gitee_id", None),
         gitlink_id=getattr(user, "gitlink_id", None),
         oauth_avatars=avatars,
+        avatar_url=getattr(user, "avatar_url", None),
         member_no=user.member_no,
         bio=user.bio,
         phone=getattr(user, "phone", None),
@@ -224,10 +225,31 @@ class AuthService:
 
     def login(self, body: LoginRequest, ledger: LedgerRequestContext) -> TokenResponse:
         email = body.email.strip().lower()
-        if _login_locked_memory(email) or _login_locked_db(self.session, email):
+        if _login_locked_memory(email):
+            raise PermissionError("尝试次数过多，请十分钟后再试")
+        # 仅在本进程已有失败记录时再查库，避免每次登录扫 audit_logs
+        if _login_fails.get(email) and _login_locked_db(self.session, email):
             raise PermissionError("尝试次数过多，请十分钟后再试")
         user = self.session.scalar(select(User).where(User.email == email))
-        ok = user is not None and verify_password(body.password, user.password_hash)
+        # 用户不存在时跳过 bcrypt，失败响应更快
+        if user is None:
+            self.audits.create(
+                actor_id=None,
+                actor_role="anonymous",
+                action="auth.login",
+                resource_type="user",
+                resource_id=email,
+                after={"email": email, "user_id": None},
+                outcome="FAIL",
+                request_id=ledger.request_id,
+                trace_id=ledger.trace_id,
+                ip=ledger.ip,
+                user_agent=ledger.user_agent,
+            )
+            self.session.commit()
+            _login_fails.setdefault(email, []).append(time.monotonic())
+            raise PermissionError("邮箱或密码错误")
+        ok = verify_password(body.password, user.password_hash)
         if ok and user is not None and user_is_disabled(self.session, user.id):
             raise PermissionError("账号已停用，请联系组委会")
         if not ok:
@@ -274,6 +296,16 @@ class AuthService:
     def update_me(self, auth: AuthUser, body: UserUpdateRequest) -> UserOut:
         user = auth.user
         data = body.model_dump(exclude_unset=True)
+        if "avatar_url" in data:
+            avatar = data["avatar_url"]
+            if avatar is None or avatar == "":
+                data["avatar_url"] = None
+            else:
+                prefix = f"/api/v1/uploads/files/u{auth.id}/"
+                if not isinstance(avatar, str) or not avatar.startswith(prefix):
+                    raise ValueError("头像必须使用本人上传的图片")
+                if ".." in avatar or "\\" in avatar:
+                    raise ValueError("头像地址无效")
         for key, value in data.items():
             setattr(user, key, value)
         self.session.add(user)
@@ -286,14 +318,14 @@ class AuthService:
         auth: AuthUser,
         body: ChangePasswordRequest,
         ledger: LedgerRequestContext,
-    ) -> None:
-        if auth.has_role("community_admin"):
-            raise PermissionError("组织账号由组委会发放，不能修改密码")
+    ) -> TokenResponse:
         user = auth.user
-        if not verify_password(body.old_password, user.password_hash):
+        old_pw = (body.old_password or "").strip()
+        new_pw = (body.new_password or "").strip()
+        if not verify_password(old_pw, user.password_hash):
             self.audits.create(
                 actor_id=auth.id,
-                actor_role=auth.primary_actor_role("student", "mentor", "committee"),
+                actor_role=auth.primary_actor_role("student", "mentor", "community_admin", "committee"),
                 action="auth.password_change",
                 resource_type="user",
                 resource_id=user.id,
@@ -304,12 +336,24 @@ class AuthService:
                 user_agent=ledger.user_agent,
             )
             self.session.commit()
+            if auth.has_role("community_admin"):
+                raise PermissionError(
+                    "原密码不正确。请填写当前能登录的密码；"
+                    "若组委会刚补发过，请用补发后的新密码。也可让组委会在「账号 → 组织 → 查看密码」核对。"
+                )
             raise PermissionError("原密码不正确")
-        user.password_hash = hash_password(body.new_password)
+        if old_pw == new_pw:
+            raise PermissionError("新密码不能与原密码相同")
+        user.password_hash = hash_password(new_pw)
+        # 组织账号同步可查看密文，便于组委会查阅（学生/导师不写）
+        if auth.has_role("community_admin"):
+            from intern_platform.services.password_vault import seal_password
+
+            user.password_enc = seal_password(new_pw)
         self.session.add(user)
         self.audits.create(
             actor_id=auth.id,
-            actor_role=auth.primary_actor_role("student", "mentor", "committee"),
+            actor_role=auth.primary_actor_role("student", "mentor", "community_admin", "committee"),
             action="auth.password_change",
             resource_type="user",
             resource_id=user.id,
@@ -320,6 +364,16 @@ class AuthService:
             user_agent=ledger.user_agent,
         )
         self.session.commit()
+        self.session.refresh(user)
+        # 密码变更会作废旧 JWT（pv），立刻发新 token 避免前端掉登录
+        bindings = load_user_roles(self.session, user.id)
+        token = create_access_token(
+            user_id=user.id,
+            email=user.email,
+            roles=roles_payload(bindings),
+            password_hash=user.password_hash,
+        )
+        return TokenResponse(access_token=token, user=user_to_out(user, bindings))
 
     def grant_role(
         self,

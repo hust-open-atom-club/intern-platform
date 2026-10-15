@@ -7,7 +7,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from intern_platform.config import PROJECT_ROOT, get_settings
+from intern_platform.config import DATA_ROOT, get_settings
 
 _lock = threading.Lock()
 _stop = threading.Event()
@@ -16,7 +16,7 @@ _last_signature: tuple[int, int] | None = None
 
 
 def backup_dir() -> Path:
-    path = PROJECT_ROOT / "data" / "backups"
+    path = DATA_ROOT / "backups"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

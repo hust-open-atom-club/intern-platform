@@ -1,6 +1,13 @@
-# 华科开放原子开源实习管理系统 — 后端
+# 华科开放原子开源实习管理系统
 
-面向华中科技大学开放原子俱乐部的开源实习管理后端（任务 2/3）。
+面向华中科技大学开放原子开源俱乐部的开源实习管理平台（任务 2/3）。
+
+## 使用与反馈
+
+- **使用地址**：https://intern.openatom.club  
+- **问题收集**（飞书）：https://ccnz793r59f8.feishu.cn/base/B20BbSPspaHnsrsnTNpcjnNDn9f?from=from_copylink  
+
+使用中遇到问题或改进建议，请填到飞书表格里。
 
 ## 技术栈
 
@@ -135,7 +142,8 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/applications/1/reviews \
 ## 状态机与审计
 
 ```text
-draft → submitted → mentor_review → community_review → committee_review
+draft → submitted → mentor_review → selected
+（导师通过后自动过社区/组委会节点；community_review / committee_review 仅作历史兼容）
   → selected | rejected
 selected → in_progress → final_submitted
   → mentor_final_review → committee_final_review

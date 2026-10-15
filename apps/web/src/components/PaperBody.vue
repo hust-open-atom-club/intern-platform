@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { withFileAuth } from '@/api/client'
 
 export type PaperBlock = {
   id: string
@@ -37,6 +38,16 @@ function followText() {
 
 watch(() => props.host, () => followText(), { immediate: true })
 watch(() => props.host.blocks?.length, () => followText())
+
+function fileLabel(url?: string) {
+  if (!url) return '未命名文件'
+  const name = url.split('?')[0].split('/').pop() || url
+  return decodeURIComponent(name)
+}
+
+function mediaHref(url?: string) {
+  return withFileAuth(url) || url || '#'
+}
 
 function remove(id: string) {
   const list = blocks()
@@ -83,7 +94,7 @@ function dropCol(block: PaperBlock) {
 
 function pick(id: string, event: MouseEvent) {
   const target = event.target as HTMLElement
-  if (target.closest('input, textarea, button, video')) return
+  if (target.closest('input, textarea, button, a, video')) return
   event.preventDefault()
   picked.value = id
   const host = event.currentTarget as HTMLElement
@@ -92,7 +103,7 @@ function pick(id: string, event: MouseEvent) {
 
 function onRootDown(event: MouseEvent) {
   const target = event.target as HTMLElement
-  if (target.closest('input, textarea, button, .pick, select')) return
+  if (target.closest('input, textarea, button, .pick, select, a')) return
   picked.value = ''
   focusText()
 }
@@ -101,7 +112,7 @@ function onWindowKey(event: KeyboardEvent) {
   if (!picked.value) return
   if (event.key !== 'Delete' && event.key !== 'Backspace') return
   const active = document.activeElement as HTMLElement | null
-  if (active?.closest('input, textarea, select')) return
+  if (active?.closest('input, textarea, select, a')) return
   const inside = !active || active === document.body || active === document.documentElement || (root.value?.contains(active) ?? false)
   if (!inside) return
   event.preventDefault()
@@ -169,13 +180,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKey))
         @keydown="onTextKey(block, $event)"
       />
       <div
-        v-else-if="block.type === 'image'"
-        class="pick"
+        v-else-if="block.type === 'image' || block.type === 'video'"
+        class="media-link pick"
         :class="{ on: picked === block.id }"
         tabindex="0"
         @mousedown="pick(block.id, $event)"
       >
-        <img class="paper-media" :src="block.url" alt="" />
+        <span class="media-kind">{{ block.type === 'image' ? '图片' : '视频' }}</span>
+        <a :href="mediaHref(block.url)" target="_blank" rel="noopener" @mousedown.stop>
+          {{ fileLabel(block.url) }}
+        </a>
+        <em>编辑里只显示链接，预览才展示完整{{ block.type === 'image' ? '图片' : '视频' }}</em>
+        <button type="button" class="media-del" @click="remove(block.id)">去掉</button>
       </div>
       <div
         v-else-if="block.type === 'table'"
@@ -198,9 +214,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKey))
           <button type="button" class="table-op" :disabled="(block.rows?.[0]?.length || 0) <= 1" @click="dropCol(block)">删一列</button>
         </div>
       </div>
-      <div v-else class="pick" :class="{ on: picked === block.id }" tabindex="0" @mousedown="pick(block.id, $event)">
-        <video class="paper-media" :src="block.url" controls />
-      </div>
     </div>
   </div>
 </template>
@@ -213,8 +226,46 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKey))
 .paper-text:focus { outline: none; }
 .pick { border-radius: 8px; padding: 6px; cursor: pointer; }
 .pick.on, .pick:focus { outline: 2px solid #1677ff; outline-offset: 3px; }
-.paper-media { display: block; width: min(100%, 720px); max-height: 220px; object-fit: contain; background: #f7f9fc; border-radius: 8px; margin: 0; pointer-events: none; }
-video.paper-media { pointer-events: auto; }
+.media-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 10px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px dashed #c5d0e0;
+  background: #f7f9fc;
+}
+.media-kind {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #1677ff;
+  background: #e8f3ff;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.media-link a {
+  color: #1677ff;
+  font-size: 0.92rem;
+  word-break: break-all;
+}
+.media-link em {
+  flex: 1 1 100%;
+  font-style: normal;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+.media-del {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: #dc2626;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.84rem;
+  padding: 0;
+}
 .table-wrap { padding: 6px; }
 .paper-table { width: 100%; border-collapse: collapse; margin: 0; }
 .paper-table td { border: 1px solid #d0d7e2; padding: 0; }

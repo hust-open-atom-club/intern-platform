@@ -5,6 +5,7 @@ from __future__ import annotations
 import mimetypes
 import re
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -12,7 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
-from intern_platform.config import PROJECT_ROOT
+from intern_platform.config import DATA_ROOT
 from intern_platform.db.session import get_db
 from intern_platform.dependencies.auth import (
     AuthUser,
@@ -26,13 +27,14 @@ from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
-UPLOAD_ROOT = PROJECT_ROOT / "data" / "uploads"
+UPLOAD_ROOT = DATA_ROOT / "uploads"
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 MAX_PDF_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_ZIP_BYTES = 100 * 1024 * 1024
 MAX_VIDEO_BYTES = 40 * 1024 * 1024
 MAX_FILE_BYTES = 20 * 1024 * 1024
+_CHUNK = 1024 * 64
 FILE_EXTS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".zip"}
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
@@ -74,6 +76,59 @@ def _detect_image_ext(raw: bytes, filename: str) -> str | None:
     return None
 
 
+async def _stream_upload(
+    file: UploadFile,
+    *,
+    auth_id: int,
+    stored_name: str,
+    max_bytes: int,
+    oversize_detail: str,
+    validate_head: Callable[[bytes], str | None] | None = None,
+) -> UploadOut:
+    """分块落盘，避免整文件进内存；超限或校验失败时清理临时文件。"""
+    user_dir = UPLOAD_ROOT / f"u{auth_id}"
+    user_dir.mkdir(parents=True, exist_ok=True)
+    path = user_dir / stored_name
+    tmp = path.with_suffix(path.suffix + ".part")
+    size = 0
+    head = b""
+    try:
+        with tmp.open("wb") as out:
+            while True:
+                chunk = await file.read(_CHUNK)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(status_code=400, detail=oversize_detail)
+                if len(head) < 16:
+                    need = 16 - len(head)
+                    head += chunk[:need]
+                    if len(head) >= 16 and validate_head is not None:
+                        err = validate_head(head)
+                        if err:
+                            raise HTTPException(status_code=400, detail=err)
+                out.write(chunk)
+        if size == 0:
+            raise HTTPException(status_code=400, detail="文件为空")
+        if validate_head is not None and len(head) < 16:
+            err = validate_head(head)
+            if err:
+                raise HTTPException(status_code=400, detail=err)
+        tmp.replace(path)
+    except Exception:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+    return UploadOut(
+        url=f"/api/v1/uploads/files/u{auth_id}/{stored_name}",
+        filename=file.filename or stored_name,
+        size=size,
+    )
+
+
 @router.post("/pdf", response_model=UploadOut)
 async def upload_pdf(
     file: UploadFile = File(...),
@@ -81,21 +136,22 @@ async def upload_pdf(
 ) -> UploadOut:
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="仅支持 PDF 文件")
-    raw = await file.read()
-    if not raw:
-        raise HTTPException(status_code=400, detail="文件为空")
-    if len(raw) > MAX_PDF_BYTES:
-        raise HTTPException(status_code=400, detail="PDF 不能超过 8MB")
-    if not raw.startswith(b"%PDF"):
-        raise HTTPException(status_code=400, detail="文件不是有效 PDF")
-
-    user_dir = UPLOAD_ROOT / f"u{auth.id}"
-    user_dir.mkdir(parents=True, exist_ok=True)
     stored = f"{uuid.uuid4().hex[:12]}_{_safe_name(file.filename, force_ext='.pdf')}"
-    path = user_dir / stored
-    path.write_bytes(raw)
-    rel = f"/api/v1/uploads/files/u{auth.id}/{stored}"
-    return UploadOut(url=rel, filename=file.filename, size=len(raw))
+
+    def _pdf_head(head: bytes) -> str | None:
+        if not head.startswith(b"%PDF"):
+            return "文件不是有效 PDF"
+        return None
+
+    out = await _stream_upload(
+        file,
+        auth_id=auth.id,
+        stored_name=stored,
+        max_bytes=MAX_PDF_BYTES,
+        oversize_detail="PDF 不能超过 8MB",
+        validate_head=_pdf_head,
+    )
+    return UploadOut(url=out.url, filename=file.filename, size=out.size)
 
 
 @router.post("/image", response_model=UploadOut)
@@ -103,22 +159,38 @@ async def upload_image(
     file: UploadFile = File(...),
     auth: AuthUser = Depends(get_current_user),
 ) -> UploadOut:
-    raw = await file.read()
-    if not raw:
+    # 图片需根据 magic 定扩展名：先缓冲头再流式写入
+    head = await file.read(16)
+    if not head:
         raise HTTPException(status_code=400, detail="文件为空")
-    if len(raw) > MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=400, detail="图片不能超过 5MB")
-    ext = _detect_image_ext(raw, file.filename or "")
+    ext = _detect_image_ext(head, file.filename or "")
     if not ext:
         raise HTTPException(status_code=400, detail="仅支持 JPG / PNG / WebP / GIF")
-
     user_dir = UPLOAD_ROOT / f"u{auth.id}"
     user_dir.mkdir(parents=True, exist_ok=True)
     stored = f"{uuid.uuid4().hex[:12]}_{_safe_name(file.filename or f'image{ext}', force_ext=ext)}"
     path = user_dir / stored
-    path.write_bytes(raw)
-    rel = f"/api/v1/uploads/files/u{auth.id}/{stored}"
-    return UploadOut(url=rel, filename=file.filename or stored, size=len(raw))
+    tmp = path.with_suffix(path.suffix + ".part")
+    size = len(head)
+    try:
+        with tmp.open("wb") as out:
+            out.write(head)
+            while True:
+                chunk = await file.read(_CHUNK)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_IMAGE_BYTES:
+                    raise HTTPException(status_code=400, detail="图片不能超过 5MB")
+                out.write(chunk)
+        tmp.replace(path)
+    except Exception:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+    return UploadOut(url=f"/api/v1/uploads/files/u{auth.id}/{stored}", filename=file.filename or stored, size=size)
 
 
 @router.post("/video", response_model=UploadOut)
@@ -126,18 +198,18 @@ async def upload_video(
     file: UploadFile = File(...),
     auth: AuthUser = Depends(get_current_user),
 ) -> UploadOut:
-    raw = await file.read()
     name = (file.filename or "").lower()
     if not name.endswith((".mp4", ".webm")):
         raise HTTPException(status_code=400, detail="仅支持 MP4 / WebM")
-    if len(raw) > MAX_VIDEO_BYTES:
-        raise HTTPException(status_code=400, detail="视频不能超过 40MB")
     ext = ".webm" if name.endswith(".webm") else ".mp4"
-    user_dir = UPLOAD_ROOT / f"u{auth.id}"
-    user_dir.mkdir(parents=True, exist_ok=True)
     stored = f"{uuid.uuid4().hex[:12]}_video{ext}"
-    (user_dir / stored).write_bytes(raw)
-    return UploadOut(url=f"/api/v1/uploads/files/u{auth.id}/{stored}", filename=file.filename or stored, size=len(raw))
+    return await _stream_upload(
+        file,
+        auth_id=auth.id,
+        stored_name=stored,
+        max_bytes=MAX_VIDEO_BYTES,
+        oversize_detail="视频不能超过 40MB",
+    )
 
 
 @router.post("/file", response_model=UploadOut)
@@ -149,16 +221,15 @@ async def upload_file(
     ext = Path(name).suffix.lower()
     if ext not in FILE_EXTS:
         raise HTTPException(status_code=400, detail="仅支持 PDF、Word、Excel、PPT、TXT、CSV、ZIP")
-    raw = await file.read()
-    if not raw:
-        raise HTTPException(status_code=400, detail="文件为空")
-    if len(raw) > MAX_FILE_BYTES:
-        raise HTTPException(status_code=400, detail="文件不能超过 20MB")
-    user_dir = UPLOAD_ROOT / f"u{auth.id}"
-    user_dir.mkdir(parents=True, exist_ok=True)
     stored = f"{uuid.uuid4().hex[:12]}_{_safe_name(name, force_ext=ext)}"
-    (user_dir / stored).write_bytes(raw)
-    return UploadOut(url=f"/api/v1/uploads/files/u{auth.id}/{stored}", filename=name or stored, size=len(raw))
+    out = await _stream_upload(
+        file,
+        auth_id=auth.id,
+        stored_name=stored,
+        max_bytes=MAX_FILE_BYTES,
+        oversize_detail="文件不能超过 20MB",
+    )
+    return UploadOut(url=out.url, filename=name or stored, size=out.size)
 
 
 @router.post("/zip", response_model=UploadOut)
@@ -170,25 +241,26 @@ async def upload_zip(
     name = file.filename or ""
     if not name.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="只能上传 zip 文件格式")
-    raw = await file.read()
-    if not raw:
-        raise HTTPException(status_code=400, detail="文件为空")
-    if len(raw) > MAX_ZIP_BYTES:
-        raise HTTPException(status_code=400, detail="文件最大不超过 100M")
-    if not (
-        raw.startswith(b"PK\x03\x04")
-        or raw.startswith(b"PK\x05\x06")
-        or raw.startswith(b"PK\x07\x08")
-    ):
-        raise HTTPException(status_code=400, detail="文件不是有效 ZIP")
-
-    user_dir = UPLOAD_ROOT / f"u{auth.id}"
-    user_dir.mkdir(parents=True, exist_ok=True)
     stored = f"{uuid.uuid4().hex[:12]}_{_safe_name(name, force_ext='.zip')}"
-    path = user_dir / stored
-    path.write_bytes(raw)
-    rel = f"/api/v1/uploads/files/u{auth.id}/{stored}"
-    return UploadOut(url=rel, filename=name, size=len(raw))
+
+    def _zip_head(head: bytes) -> str | None:
+        if not (
+            head.startswith(b"PK\x03\x04")
+            or head.startswith(b"PK\x05\x06")
+            or head.startswith(b"PK\x07\x08")
+        ):
+            return "文件不是有效 ZIP"
+        return None
+
+    out = await _stream_upload(
+        file,
+        auth_id=auth.id,
+        stored_name=stored,
+        max_bytes=MAX_ZIP_BYTES,
+        oversize_detail="文件最大不超过 100M",
+        validate_head=_zip_head,
+    )
+    return UploadOut(url=out.url, filename=name, size=out.size)
 
 
 @router.get("/files/{user_part}/{filename}")
@@ -208,12 +280,22 @@ def get_uploaded_file(
         raise HTTPException(status_code=404, detail="文件不存在")
 
     lower = filename.lower()
-    viewer = _viewer(db, credentials, access_token)
-    if viewer is None:
-        raise HTTPException(status_code=401, detail="请先登录后再下载")
     owner_id = int(user_part[1:])
-    if not _can_download(db, viewer, owner_id):
-        raise HTTPException(status_code=403, detail="无权下载该文件")
+    site_media_ext = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".webm")
+    rel = f"/api/v1/uploads/files/{user_part}/{filename}"
+    # 组委会站点图/视频、用户头像、社区 Logo/主页图：访客可直接打开；简历/zip 等仍要登录
+    is_site_media = lower.endswith(site_media_ext) and _owner_is_committee(db, owner_id)
+    is_avatar = lower.endswith(tuple(IMAGE_EXTS)) and _is_user_avatar(db, owner_id, rel)
+    is_community_public = lower.endswith(tuple(IMAGE_EXTS)) and _is_community_public_image(
+        db, rel
+    )
+    public_media = is_site_media or is_avatar or is_community_public
+    if not public_media:
+        viewer = _viewer(db, credentials, access_token)
+        if viewer is None:
+            raise HTTPException(status_code=401, detail="请先登录后再下载")
+        if not _can_download(db, viewer, owner_id):
+            raise HTTPException(status_code=403, detail="无权下载该文件")
 
     media = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     disposition = "inline"
@@ -234,7 +316,7 @@ def get_uploaded_file(
         disposition = "attachment"
     headers = {
         "X-Content-Type-Options": "nosniff",
-        "Cache-Control": "private, no-store",
+        "Cache-Control": "public, max-age=86400" if public_media else "private, no-store",
     }
     return FileResponse(
         path,
@@ -276,6 +358,58 @@ def _viewer(
     return AuthUser(user=user, roles=load_user_roles(db, user.id))
 
 
+def _owner_is_committee(db: Session, owner_id: int) -> bool:
+    from sqlalchemy import select
+
+    from intern_platform.models.role import Role, UserRole
+
+    role = db.scalar(select(Role).where(Role.code == "committee"))
+    if role is None:
+        return False
+    return (
+        db.scalar(
+            select(UserRole.id).where(
+                UserRole.user_id == owner_id,
+                UserRole.role_id == role.id,
+            ).limit(1)
+        )
+        is not None
+    )
+
+
+def _is_user_avatar(db: Session, owner_id: int, rel: str) -> bool:
+    user = db.get(User, owner_id)
+    if user is None:
+        return False
+    current = (getattr(user, "avatar_url", None) or "").strip()
+    return bool(current) and current == rel
+
+
+def _is_community_public_image(db: Session, rel: str) -> bool:
+    """社区对外展示的 Logo / 主页配图需匿名可读（项目列表、社区主页）。"""
+    from sqlalchemy import or_, select
+
+    from intern_platform.models.community import Community
+
+    path = (rel or "").strip()
+    if not path:
+        return False
+    # 兼容偶发带 query 的旧数据
+    path = path.split("?", 1)[0]
+    hit = db.scalar(
+        select(Community.id)
+        .where(
+            or_(
+                Community.logo_url == path,
+                Community.logo_url == rel,
+                Community.intro_body.contains(path),
+            )
+        )
+        .limit(1)
+    )
+    return hit is not None
+
+
 def _can_download(db: Session, viewer: AuthUser, owner_id: int) -> bool:
     """本人 / 组委会 / 名下课题导师 / 同社区管理员可下载。"""
     if viewer.id == owner_id:
@@ -314,7 +448,7 @@ def _can_download(db: Session, viewer: AuthUser, owner_id: int) -> bool:
         )
         if linked is not None:
             return True
-        # 同社区其他管理员上传的结项材料等
+        # 同社区其他管理员上传的材料等
         from intern_platform.models.role import Role, UserRole
 
         admin_role = db.scalar(select(Role).where(Role.code == "community_admin"))

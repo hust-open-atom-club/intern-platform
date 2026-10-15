@@ -7,7 +7,7 @@ import smtplib
 from email.message import EmailMessage
 from pathlib import Path
 
-from intern_platform.config import PROJECT_ROOT, get_settings
+from intern_platform.config import DATA_ROOT, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def send_mail(*, to_addr: str, subject: str, body: str) -> bool:
     password = getattr(settings, "smtp_password", "") or ""
     from_addr = getattr(settings, "smtp_from", "") or user or "noreply@intern-platform.local"
 
-    log_dir = PROJECT_ROOT / "data" / "mail"
+    log_dir = DATA_ROOT / "mail"
     log_dir.mkdir(parents=True, exist_ok=True)
     stamp = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_to = to_addr.replace("@", "_at_").replace("/", "_")

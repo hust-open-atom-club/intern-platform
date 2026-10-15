@@ -2,18 +2,17 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import CommunityDesk from '@/views/community/PendingReviewsView.vue'
-import CommunityFinalSubmitView from '@/views/org/CommunityFinalSubmitView.vue'
 import api, { withFileAuth } from '@/api/client'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import ToastFeedback from '@/components/ToastFeedback.vue'
 import LogoUploadField from '@/components/LogoUploadField.vue'
 import CommunityIntroEditor from '@/components/CommunityIntroEditor.vue'
 import CommunityIntroView from '@/components/CommunityIntroView.vue'
-import type { ApplicationOut, CommunityIntroBody, CommunityMemberOut, CommunityOut, ProjectOut } from '@/api/types'
+import type { CommunityIntroBody, CommunityMemberOut, CommunityOut, ProjectOut } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
-import { projectStatusLabel, statusLabel, statusTone } from '@/utils/statusLabel'
+import { projectStatusLabel, statusTone } from '@/utils/statusLabel'
 
-type Tab = 'home' | 'mentors' | 'projects' | 'liaison' | 'selection' | 'finals' | 'rewards'
+type Tab = 'home' | 'mentors' | 'projects' | 'liaison' | 'rewards'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -27,7 +26,7 @@ const tab = ref<Tab>(readOrgTab(route.query.tab))
 function readOrgTab(value: unknown): Tab {
   const name = String(value || 'home')
   return (
-    ['home', 'mentors', 'projects', 'liaison', 'selection', 'finals', 'rewards'] as string[]
+    ['home', 'mentors', 'projects', 'liaison', 'rewards'] as string[]
   ).includes(name)
     ? (name as Tab)
     : 'home'
@@ -37,27 +36,21 @@ function openTab(next: Tab) {
   tab.value = next
   const query = next === 'home' ? {} : { tab: next }
   void router.replace({ path: '/org', query })
+  if (next === 'mentors' || next === 'projects') {
+    void loadMentors().catch(() => undefined)
+  }
 }
 
 watch(
   () => route.query.tab,
   (value) => {
     tab.value = readOrgTab(value)
-    if (tab.value === 'selection') void loadSelectionQueue().catch(() => undefined)
-    if (tab.value === 'finals') void loadFinalQueue().catch(() => undefined)
     if (tab.value === 'rewards') void loadRewards().catch(() => undefined)
   },
 )
 const myCommunity = ref<CommunityOut | null>(null)
 const mentors = ref<CommunityMemberOut[]>([])
 const orgProjects = ref<ProjectOut[]>([])
-const selectionQueue = ref<ApplicationOut[]>([])
-const finalQueue = ref<ApplicationOut[]>([])
-const selectionBusy = ref(false)
-const selectionNote = ref('')
-const selectionTarget = ref<ApplicationOut | null>(null)
-const selectionDecision = ref<'approve' | 'reject' | null>(null)
-const selectionOpen = ref(false)
 type RewardItem = {
   application_id: number
   project_title: string
@@ -139,9 +132,40 @@ const previewIntroKey = computed(() =>
     .join('|'),
 )
 
+function mentorLabel(m: Pick<CommunityMemberOut, 'display_name' | 'email'>) {
+  const name = (m.display_name || '').trim()
+  const email = (m.email || '').trim()
+  if (name && email) return `${name}（${email}）`
+  return name || email || '未命名导师'
+}
+
 function mentorName(project: ProjectOut) {
-  const hit = mentors.value.find((m) => m.user_id === project.mentor_id)
-  return hit ? hit.display_name || hit.email : `导师 #${project.mentor_id}`
+  const fromApi = (project.mentor_name || '').trim()
+  if (fromApi) return fromApi
+  const hit = mentors.value.find((m) => Number(m.user_id) === Number(project.mentor_id))
+  if (hit) return hit.display_name?.trim() || hit.email || `导师 #${project.mentor_id}`
+  if (project.mentor_email) return project.mentor_email
+  return project.mentor_id ? `导师 #${project.mentor_id}` : '未指定'
+}
+
+/** 项目里已有导师但成员接口偶发失败时，用项目字段补进下拉，避免空白 */
+function mergeMentorsFromProjects(rows: ProjectOut[]) {
+  const map = new Map<number, CommunityMemberOut>()
+  for (const m of mentors.value) map.set(Number(m.user_id), m)
+  for (const p of rows) {
+    const id = Number(p.mentor_id)
+    if (!id || map.has(id)) continue
+    map.set(id, {
+      user_id: id,
+      display_name: (p.mentor_name || '').trim() || `导师 #${id}`,
+      email: (p.mentor_email || '').trim() || '',
+      role: 'mentor',
+      community_id: myCommunity.value?.id ?? null,
+      community_name: myCommunity.value?.name ?? null,
+      role_label: '导师',
+    })
+  }
+  mentors.value = [...map.values()].sort((a, b) => a.user_id - b.user_id)
 }
 
 function syncHomeForm(c: CommunityOut) {
@@ -170,8 +194,12 @@ async function loadMentors() {
       { params: { role: 'mentor' } },
     )
     mentors.value = data
-  } catch {
-    mentors.value = []
+    if (orgProjects.value.length) mergeMentorsFromProjects(orgProjects.value)
+  } catch (e: unknown) {
+    // 保留已有列表，避免一次失败把下拉清空成空白
+    if (!mentors.value.length) {
+      toast.value?.show(e instanceof Error ? e.message : '导师列表加载失败', 'err')
+    }
   }
 }
 
@@ -189,6 +217,7 @@ async function loadProjects() {
   const map = new Map<number, ProjectOut>()
   for (const row of [...d.data, ...p.data, ...off.data]) map.set(row.id, row)
   orgProjects.value = [...map.values()].sort((a, b) => b.id - a.id)
+  mergeMentorsFromProjects(orgProjects.value)
 }
 
 async function load() {
@@ -200,61 +229,11 @@ async function load() {
       await Promise.all([
         loadMentors(),
         loadProjects(),
-        loadSelectionQueue(),
-        loadFinalQueue(),
         loadRewards(),
       ])
     }
   } catch {
     myCommunity.value = null
-  }
-}
-
-async function loadSelectionQueue() {
-  const { data } = await api.get<ApplicationOut[]>('/applications/inbox')
-  selectionQueue.value = data.filter((item) => item.status === 'community_review')
-}
-
-async function loadFinalQueue() {
-  const { data } = await api.get<ApplicationOut[]>('/applications/inbox')
-  finalQueue.value = data.filter((item) => item.status === 'community_final_review')
-}
-
-function askSelection(row: ApplicationOut, decision: 'approve' | 'reject') {
-  selectionTarget.value = row
-  selectionDecision.value = decision
-  selectionNote.value = decision === 'approve' ? '社区审核通过' : ''
-  selectionOpen.value = true
-}
-
-async function confirmSelection() {
-  const row = selectionTarget.value
-  const decision = selectionDecision.value
-  if (!row || !decision) return
-  if (decision === 'reject' && selectionNote.value.trim().length < 2) {
-    toast.value?.show('退回请写明原因', 'err')
-    selectionOpen.value = true
-    return
-  }
-  selectionBusy.value = true
-  try {
-    await api.post(`/applications/${row.id}/reviews`, {
-      decision,
-      comment: selectionNote.value.trim() || '社区审核通过',
-      version: row.version,
-    })
-    toast.value?.show(
-      decision === 'approve' ? '已通过，组委会已自动接收中选' : '已退回该申请',
-      decision === 'approve' ? 'ok' : 'err',
-    )
-    selectionNote.value = ''
-    selectionTarget.value = null
-    selectionDecision.value = null
-    await loadSelectionQueue()
-  } catch (e: unknown) {
-    toast.value?.show(e instanceof Error ? e.message : '处理失败', 'err')
-  } finally {
-    selectionBusy.value = false
   }
 }
 
@@ -278,7 +257,10 @@ async function decideReward(id: number, decision: 'approved' | 'rejected') {
       decision,
       note: decision === 'rejected' ? rejectNote.value.trim() : null,
     })
-    toast.value?.show(decision === 'approved' ? '已通过这份奖励申请' : '已驳回这份奖励申请', 'ok')
+    toast.value?.show(
+      decision === 'approved' ? '已通过，组委会已自动计入结项名单' : '已驳回这份实习申请',
+      'ok',
+    )
     rejectId.value = null
     rejectNote.value = ''
     await loadRewards()
@@ -517,29 +499,6 @@ onMounted(async () => {
       @cancel="unpublishTarget = null"
       @confirm="confirmUnpublish"
     />
-    <ConfirmDialog
-      :open="selectionOpen"
-      :title="selectionDecision === 'reject' ? '退回申请？' : '确认通过并报送组委会？'"
-      :message="
-        selectionTarget
-          ? selectionDecision === 'reject'
-            ? `退回「${selectionTarget.student_name || '学生'}」对「${selectionTarget.project_title}」的申请。`
-            : `通过「${selectionTarget.student_name || '学生'}」后，组委会会自动接收中选，不必再点一次。`
-          : ''
-      "
-      :confirm-text="selectionDecision === 'reject' ? '确认退回' : '确认通过'"
-      cancel-text="取消"
-      :danger="selectionDecision === 'reject'"
-      @update:open="selectionOpen = $event"
-      @cancel="selectionTarget = null; selectionDecision = null"
-      @confirm="confirmSelection"
-    >
-      <label class="dlg-note">
-        {{ selectionDecision === 'reject' ? '退回原因' : '审核说明（可选）' }}
-        <textarea v-model="selectionNote" rows="3" maxlength="500" />
-      </label>
-    </ConfirmDialog>
-
     <header class="head">
       <div>
         <h1>{{ myCommunity?.name || '组织工作台' }}</h1>
@@ -567,14 +526,8 @@ onMounted(async () => {
           项目 <span>{{ orgProjects.length }}</span>
         </button>
         <button type="button" :class="{ on: tab === 'liaison' }" @click="openTab('liaison')">社区对接</button>
-        <button type="button" :class="{ on: tab === 'selection' }" @click="openTab('selection')">
-          选拔审核 <span>{{ selectionQueue.length }}</span>
-        </button>
         <button type="button" :class="{ on: tab === 'rewards' }" @click="openTab('rewards')">
-          奖励申请 <span>{{ rewards.length }}</span>
-        </button>
-        <button type="button" :class="{ on: tab === 'finals' }" @click="openTab('finals')">
-          结项材料 <span>{{ finalQueue.length }}</span>
+          实习申请 <span>{{ rewards.length }}</span>
         </button>
       </nav>
 
@@ -628,7 +581,7 @@ onMounted(async () => {
             <div class="live">
               <header class="live-head">
                 <div class="live-logo">
-                  <img v-if="homeForm.logo_url" :src="homeForm.logo_url" alt="" />
+                  <img v-if="homeForm.logo_url" :src="withFileAuth(homeForm.logo_url) || homeForm.logo_url" alt="" />
                   <span v-else>{{ (homeForm.name || '?').slice(0, 1) }}</span>
                 </div>
                 <div>
@@ -677,8 +630,13 @@ onMounted(async () => {
           <button class="btn sm" type="button" @click="copyInvite">复制</button>
         </div>
 
-        <h3 class="subh">已加入（{{ mentors.length }}）</h3>
-        <div v-if="!mentors.length" class="empty">暂无导师</div>
+        <div class="subh-row">
+          <h3 class="subh">已加入（{{ mentors.length }}）</h3>
+          <button class="btn sm secondary" type="button" :disabled="busy" @click="loadMentors">刷新</button>
+        </div>
+        <div v-if="!mentors.length" class="empty">
+          暂无导师。确认导师使用的是本社区邀请码（不是别的社区的码）完成注册。
+        </div>
         <div v-else class="scroll">
           <table>
             <thead>
@@ -689,8 +647,8 @@ onMounted(async () => {
             </thead>
             <tbody>
               <tr v-for="m in mentors" :key="m.user_id">
-                <td>{{ m.display_name }}</td>
-                <td>{{ m.email }}</td>
+                <td>{{ m.display_name || '—' }}</td>
+                <td>{{ m.email || '—' }}</td>
               </tr>
             </tbody>
           </table>
@@ -701,16 +659,28 @@ onMounted(async () => {
       <section v-else-if="tab === 'projects'" class="panel">
         <div class="project-card">
           <h2>新建项目</h2>
-          <p class="bar-hint">填完就发布。修改已有项目不会占用这张表。</p>
+          <p class="bar-hint">填完就发布。修改已有项目不会占用这张表。发布后，指定导师的工作台才会出现该任务。</p>
+          <p v-if="!mentors.length" class="bar-hint warn">
+            「{{ myCommunity?.name }}」还没有导师。请先打开「导师」页，用本社区邀请码让导师注册；注册成功后点下方刷新。
+          </p>
+          <p v-else class="bar-hint">可选导师 {{ mentors.length }} 人（仅本社区邀请码注册的导师会出现在这里）。</p>
           <form class="form proj" @submit.prevent="createProject">
             <label>
-              导师
-              <select v-model="projectForm.mentor_id" required>
-                <option disabled value="">选择</option>
+              负责导师
+              <select v-model="projectForm.mentor_id" required :disabled="!mentors.length">
+                <option disabled value="">{{ mentors.length ? '请选择导师' : '暂无导师' }}</option>
                 <option v-for="m in mentors" :key="m.user_id" :value="m.user_id">
-                  {{ m.display_name }}
+                  {{ mentorLabel(m) }}
                 </option>
               </select>
+              <button
+                class="btn sm secondary refresh-mentors"
+                type="button"
+                :disabled="busy"
+                @click="loadMentors"
+              >
+                刷新导师列表
+              </button>
             </label>
             <label>标题<input v-model="projectForm.title" required /></label>
             <label class="full">摘要<input v-model="projectForm.summary" /></label>
@@ -742,10 +712,10 @@ onMounted(async () => {
           </div>
           <form class="form proj" @submit.prevent="savePreview">
             <label>
-              导师
+              负责导师
               <select v-model="editForm.mentor_id" required>
                 <option v-for="m in mentors" :key="m.user_id" :value="m.user_id">
-                  {{ m.display_name }}
+                  {{ mentorLabel(m) }}
                 </option>
               </select>
             </label>
@@ -798,12 +768,15 @@ onMounted(async () => {
                 <td>{{ mentorName(p) }}</td>
                 <td>
                   <select
-                    :value="p.mentor_id"
-                    :disabled="busy"
+                    :value="Number(p.mentor_id)"
+                    :disabled="busy || !mentors.length"
                     @change="onReassignChange(p.id, $event)"
                   >
-                    <option v-for="m in mentors" :key="m.user_id" :value="m.user_id">
-                      {{ m.display_name }}
+                    <option v-if="!mentors.length" :value="Number(p.mentor_id)">
+                      {{ mentorName(p) }}
+                    </option>
+                    <option v-for="m in mentors" :key="m.user_id" :value="Number(m.user_id)">
+                      {{ mentorLabel(m) }}
                     </option>
                   </select>
                 </td>
@@ -856,8 +829,8 @@ onMounted(async () => {
       <section v-else-if="tab === 'rewards'" class="panel">
         <div class="panel-bar">
           <div>
-            <h2>学生奖励申请</h2>
-            <p class="bar-hint">验收通过后，学生把关闭证明和联系方式交给本社区。通过或驳回只在社区和学生之间。</p>
+            <h2>学生实习申请</h2>
+            <p class="bar-hint">验收通过后，学生提交实习任务书与 PR/Issue 材料及联系方式。通过后组委会自动计入结项名单；实习认定由社区自行处理。</p>
           </div>
         </div>
         <div class="reward-tools">
@@ -885,14 +858,14 @@ onMounted(async () => {
             </select>
           </label>
         </div>
-        <p v-if="!rewards.length" class="muted">这一栏没有奖励申请。</p>
+        <p v-if="!rewards.length" class="muted">这一栏没有实习申请。</p>
         <ul v-else class="final-list">
           <li v-for="item in rewards" :key="item.application_id">
             <div>
               <strong>{{ item.student_name || '学生' }}</strong>
               <span>{{ item.project_title }} · {{ item.created_at || '' }}</span>
               <p class="reward-body">{{ item.body }}</p>
-              <a v-if="item.attachment_url" :href="withFileAuth(item.attachment_url)" download>{{ item.attachment_name || '证明材料.zip' }}</a>
+              <a v-if="item.attachment_url" :href="withFileAuth(item.attachment_url)" download>{{ item.attachment_name || '实习申请材料.zip' }}</a>
               <p v-if="item.decision === 'rejected' && item.decision_note" class="reward-note">驳回原因：{{ item.decision_note }}</p>
             </div>
             <div v-if="item.decision === 'pending' || !item.decision" class="reward-actions">
@@ -909,60 +882,6 @@ onMounted(async () => {
         </ul>
       </section>
 
-      <section v-else-if="tab === 'selection'" class="panel">
-        <div class="panel-bar">
-          <div>
-            <h2>选拔审核</h2>
-            <p class="bar-hint">导师通过设计并预留名额后，在这里审核。社区通过后，组委会会自动接收中选，不必再点一次。</p>
-          </div>
-        </div>
-        <p v-if="!selectionQueue.length" class="muted">现在没有待社区审核的申请。</p>
-        <ul v-else class="final-list">
-          <li v-for="item in selectionQueue" :key="item.id">
-            <div>
-              <strong>{{ item.student_name || '学生' }}</strong>
-              <span>{{ item.project_title || `申请 #${item.id}` }} · {{ statusLabel(item.status) }}</span>
-            </div>
-            <div class="row-acts">
-              <button
-                class="btn sm pass"
-                type="button"
-                :disabled="selectionBusy"
-                @click="askSelection(item, 'approve')"
-              >
-                通过
-              </button>
-              <button
-                class="btn sm danger"
-                type="button"
-                :disabled="selectionBusy"
-                @click="askSelection(item, 'reject')"
-              >
-                退回
-              </button>
-            </div>
-          </li>
-        </ul>
-      </section>
-
-      <section v-else-if="tab === 'finals'" class="panel">
-        <div class="panel-bar">
-          <div>
-            <h2>提交结项材料</h2>
-            <p class="bar-hint">导师通过学生的结项验收后，点「去提交」。填说明和材料并确认后，组委会会自动接收并计入结项名单，不必再等组委会点一次通过。</p>
-          </div>
-        </div>
-        <p v-if="!finalQueue.length" class="muted">现在没有待提交的结项，提交按钮不能点。学生验收经导师通过后可以提交。</p>
-        <ul v-else class="final-list">
-          <li v-for="item in finalQueue" :key="item.id">
-            <div>
-              <strong>{{ item.student_name || '学生' }}</strong>
-              <span>{{ item.project_title || `申请 #${item.id}` }}</span>
-            </div>
-          </li>
-        </ul>
-        <CommunityFinalSubmitView embedded :application-id="finalQueue[0]?.id ?? null" />
-      </section>
     </template>
   </div>
 </template>
@@ -1060,6 +979,7 @@ onMounted(async () => {
   font-size: 0.82rem;
   color: #8c8c8c;
 }
+.bar-hint.warn { color: #ad6800; }
 .final-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .final-list li { display: flex; justify-content: space-between; align-items: center; gap: 16px; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; background: #fff; }
 .final-list strong, .final-list span { display: block; }
@@ -1312,6 +1232,14 @@ onMounted(async () => {
   letter-spacing: 0.06em;
   color: #262626;
 }
+.subh-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 1rem 0 0.5rem;
+}
+.subh-row .subh { margin: 0; }
 .subh {
   margin: 0 0 0.55rem;
   font-size: 0.92rem;
@@ -1351,8 +1279,10 @@ td a {
   text-decoration: none;
 }
 table select {
-  max-width: 8.5rem;
+  max-width: 12rem;
   font-size: 0.82rem;
+  color: #1f2937;
+  background: #fff;
 }
 .project-card {
   border: 1px solid #e8e8e8;
@@ -1391,6 +1321,14 @@ table select {
   font: inherit;
   color: #1f2937;
   background: #fff;
+}
+.form.proj select option {
+  color: #1f2937;
+  background: #fff;
+}
+.refresh-mentors {
+  align-self: flex-start;
+  margin-top: 4px;
 }
 .form.proj .acts { display: flex; gap: 8px; align-items: center; }
 .form.proj {

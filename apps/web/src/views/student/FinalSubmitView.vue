@@ -8,9 +8,12 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import AgreementDialog from '@/components/AgreementDialog.vue'
 import PageCrumb from '@/components/PageCrumb.vue'
 import { resolveCrumbs } from '@/utils/crumbTrail'
+import { handleStudentAppLoadError, rejectIfNotOwner } from '@/utils/studentAppAccess'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 const app = ref<ApplicationOut | null>(null)
 
 const text = ref('')
@@ -57,13 +60,20 @@ const acceptancePending = computed(() =>
 async function load() {
   error.value = ''
   try {
+    if (auth.token && !auth.user) await auth.fetchMe()
     const { data } = await api.get<ApplicationOut>(`/applications/${id()}`)
+    if (rejectIfNotOwner(data, auth.user?.id)) {
+      app.value = null
+      error.value = '这不是你的任务进度，正在返回首页…'
+      return
+    }
     app.value = data
     if (acceptancePending.value) {
       error.value = '已有验收在审核中，请等待审完；未通过后才能再次提交'
     }
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '加载失败'
+    app.value = null
+    error.value = handleStudentAppLoadError(e)
   }
 }
 

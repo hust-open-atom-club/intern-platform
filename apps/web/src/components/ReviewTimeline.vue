@@ -40,9 +40,8 @@ const pipeline = computed(() => {
 
   type Stage = { key: string; label: string; state: 'done' | 'current' | 'pending' | 'fail' }
   const stages: Stage[] = [
-    { key: 'mentor', label: '导师', state: 'pending' },
-    { key: 'community', label: '社区', state: 'pending' },
-    { key: 'committee', label: '组委会', state: 'pending' },
+    { key: 'mentor', label: '导师审核', state: 'pending' },
+    { key: 'selected', label: '中选', state: 'pending' },
   ]
 
   if (pastReview && !rejected) {
@@ -53,44 +52,27 @@ const pipeline = computed(() => {
   }
 
   if (s === 'rejected') {
-    const last = [...records.value].reverse().find((r) => (r.to_status || '').includes('reject'))
-    const from = last?.from_status || ''
-    if (from.includes('committee')) {
-      stages[0].state = 'done'
-      stages[1].state = 'done'
-      stages[2].state = 'fail'
-    } else if (from.includes('community')) {
-      stages[0].state = 'done'
-      stages[1].state = 'fail'
-    } else {
-      stages[0].state = 'fail'
-    }
+    stages[0].state = 'fail'
     return stages
   }
 
   if (['draft', 'submitted', 'mentor_review'].includes(s)) {
     stages[0].state = 'current'
-  } else if (s === 'community_review') {
+  } else if (s === 'community_review' || s === 'committee_review') {
+    // 历史滞留状态：导师已通过，正落入中选
     stages[0].state = 'done'
     stages[1].state = 'current'
-  } else if (s === 'committee_review') {
-    stages[0].state = 'done'
-    stages[1].state = 'done'
-    stages[2].state = 'current'
   }
   return stages
 })
 
 const pipelineHint = computed(() => {
   const s = props.application?.status || ''
-  if (s === 'community_review') {
-    return '名额已预留；还需社区 → 组委会确认后才能启动开发'
-  }
-  if (s === 'committee_review') {
-    return '名额已预留；还需组委会确认后才能启动开发'
+  if (s === 'community_review' || s === 'committee_review') {
+    return '导师已通过，名额已预留，即将计入中选'
   }
   if (s === 'mentor_review' || s === 'submitted') {
-    return '第一关：导师审设计文档'
+    return '导师审设计文档；通过后直接中选'
   }
   if (s === 'selected') return '已录取，待启动开发'
   if (s === 'in_progress') return '开发进行中'
@@ -103,9 +85,9 @@ const nowExplain = computed(() => {
   const map: Record<string, string> = {
     draft: '草稿，尚未提交',
     submitted: '已提交，等待导师审核',
-    mentor_review: '导师审设计（第一关）',
-    community_review: '社区审核（第二关·名额已预留）',
-    committee_review: '组委会审核（第三关·名额已预留）',
+    mentor_review: '导师审设计中',
+    community_review: '导师已通过，名额已预留',
+    committee_review: '导师已通过，名额已预留',
     selected: '已录取，待启动开发',
     rejected: '申请未通过',
     withdrawn: '已放弃/取消接取',

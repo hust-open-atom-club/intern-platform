@@ -16,7 +16,7 @@ from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from intern_platform.config import PROJECT_ROOT, Settings, get_settings
+from intern_platform.config import DATA_ROOT, Settings, get_settings
 from intern_platform.dependencies.auth import ALGORITHM, AuthUser, load_user_roles
 from intern_platform.models.user import User
 from intern_platform.schemas.auth import UserOut
@@ -36,7 +36,7 @@ _used_states: dict[str, float] = {}
 _used_lock = threading.Lock()
 _STATE_TTL_SEC = 600
 
-OAUTH_CLIENTS_PATH = PROJECT_ROOT / "data" / "oauth_clients.json"
+OAUTH_CLIENTS_PATH = DATA_ROOT / "oauth_clients.json"
 
 PROVIDER_DOCS: dict[str, dict[str, str]] = {
     "github": {

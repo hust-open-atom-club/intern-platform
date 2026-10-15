@@ -50,7 +50,8 @@ def main():
     rows.append(("health", code == 200 and data.get("ok") is True, data))
 
     code, data = call("GET", "/projects?status=published")
-    rows.append(("published projects", code == 200 and isinstance(data, list) and len(data) > 0, f"n={len(data) if isinstance(data, list) else data}"))
+    # 种子不再预置演示课题；允许公开列表为空
+    rows.append(("published projects", code == 200 and isinstance(data, list), f"n={len(data) if isinstance(data, list) else data}"))
 
     code, data = call("GET", "/communities?status=approved")
     rows.append(("approved communities", code == 200 and isinstance(data, list) and len(data) > 0, f"n={len(data) if isinstance(data, list) else data}"))
@@ -84,12 +85,9 @@ def main():
         code, data = call("GET", "/communities/admin-of", tok)
         rows.append(("org admin-of", code == 200 and isinstance(data, list), f"n={len(data) if isinstance(data, list) else data}"))
         code, data = call("GET", "/applications/inbox", tok)
-        sel = [a for a in data if isinstance(data, list) and a.get("status") == "community_review"] if isinstance(data, list) else []
-        fin = [a for a in data if isinstance(data, list) and a.get("status") == "community_final_review"] if isinstance(data, list) else []
-        rows.append(("org inbox", code == 200, f"selection={len(sel)} final={len(fin)} total={len(data) if isinstance(data, list) else data}"))
-        # route exists
-        code, data = call("POST", "/applications/1/community-final", tok, {"note": "probe"})
-        rows.append(("community-final route live", code in (400, 403, 404, 409), code))
+        rows.append(("org inbox", code == 200, f"total={len(data) if isinstance(data, list) else data}"))
+        code, data = call("GET", "/applications/rewards/inbox?status=all", tok)
+        rows.append(("org rewards inbox", code == 200, type(data).__name__ if data is not None else None))
 
     # committee
     tok, user = login("committee@demo.hust.edu.cn")

@@ -100,7 +100,9 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function alignScope(path: string) {
-    const next = getStoredToken(isOpsPath(path) ? 'ops' : 'public')
+    // 组委会会话在 ops；导览用户端页面时若没有 public token，沿用 ops，避免掉成访客
+    const scoped = getStoredToken(isOpsPath(path) ? 'ops' : 'public')
+    const next = scoped || (!isOpsPath(path) ? getStoredToken('ops') : null)
     if (next !== token.value) {
       token.value = next
       user.value = null
@@ -115,14 +117,13 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const { data } = await api.get<UserOut>('/auth/me')
       const codes = data.roles.map((role) => role.code)
-      const committeeOnly = codes.includes('committee') && !codes.some((code) => ['student', 'mentor', 'community_admin'].includes(code))
-      if (committeeOnly && !isOpsPath()) {
-        const kept = token.value
-        setStoredToken(kept, 'ops')
+      const committeeOnly =
+        codes.includes('committee') &&
+        !codes.some((code) => ['student', 'mentor', 'community_admin'].includes(code))
+      if (committeeOnly) {
+        // 组委会账号始终记在 ops，用户端只作导览，不写入 public
+        setStoredToken(token.value, 'ops')
         setStoredToken(null, 'public')
-        token.value = null
-        user.value = null
-        return null
       }
       user.value = data
       return data
@@ -138,9 +139,17 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function logout() {
-    setStoredToken(null, isOpsPath() ? 'ops' : 'public')
+    setStoredToken(null, 'ops')
+    setStoredToken(null, 'public')
     token.value = null
     user.value = null
+  }
+
+  /** 改密等场景：用新 JWT 续会话，避免旧 token 因密码戳失效。 */
+  function setSession(accessToken: string, nextUser: UserOut, scope?: 'public' | 'ops') {
+    token.value = accessToken
+    setStoredToken(accessToken, scope)
+    user.value = nextUser
   }
 
   return {
@@ -161,6 +170,7 @@ export const useAuthStore = defineStore('auth', () => {
     registerMentor,
     alignScope,
     fetchMe,
+    setSession,
     logout,
   }
 })

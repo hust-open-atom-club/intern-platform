@@ -2,7 +2,35 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from urllib.parse import unquote
+
+from intern_platform.config import DATA_ROOT
+
 UPLOAD_URL_PREFIX = "/api/v1/uploads/files/"
+UPLOAD_ROOT = DATA_ROOT / "uploads"
+
+
+def local_path_for_upload_url(url: str | None) -> Path | None:
+    """把本站上传 URL 解析为磁盘路径；非法路径返回 None。"""
+    if not url:
+        return None
+    value = unquote(str(url).strip())
+    if not value.startswith(UPLOAD_URL_PREFIX):
+        return None
+    rest = value[len(UPLOAD_URL_PREFIX) :]
+    if not rest or ".." in rest or "\\" in rest or rest.startswith("/"):
+        return None
+    path = (UPLOAD_ROOT / rest).resolve()
+    root = UPLOAD_ROOT.resolve()
+    if path != root and root not in path.parents:
+        return None
+    return path
+
+
+def uploaded_file_exists(url: str | None) -> bool:
+    path = local_path_for_upload_url(url)
+    return path is not None and path.is_file()
 
 
 def is_safe_upload_url(

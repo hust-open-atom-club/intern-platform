@@ -6,8 +6,18 @@ import type { PortalLinksOut } from '@/api/types'
 import HeroCarousel from '@/components/HeroCarousel.vue'
 
 const links = ref<PortalLinksOut | null>(null)
+const flash = ref('')
 
 onMounted(async () => {
+  try {
+    const notice = sessionStorage.getItem('intern_platform_flash')
+    if (notice) {
+      flash.value = notice
+      sessionStorage.removeItem('intern_platform_flash')
+    }
+  } catch {
+    /* ignore */
+  }
   try {
     const { data } = await api.get<PortalLinksOut>('/integrations/links')
     links.value = data
@@ -63,6 +73,7 @@ function scrollTrack(dir: 1 | -1) {
 
 <template>
   <div>
+    <p v-if="flash" class="home-flash" role="status">{{ flash }}</p>
     <HeroCarousel />
 
     <section class="section">
@@ -166,3 +177,15 @@ function scrollTrack(dir: 1 | -1) {
     </section>
   </div>
 </template>
+
+<style scoped>
+.home-flash {
+  margin: 0;
+  padding: 0.75rem 1.25rem;
+  text-align: center;
+  color: #92400e;
+  background: #fffbeb;
+  border-bottom: 1px solid #fde68a;
+  font-size: 0.95rem;
+}
+</style>

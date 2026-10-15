@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
-import api from '@/api/client'
+import { useRoute, useRouter } from 'vue-router'
+import api, { withFileAuth } from '@/api/client'
 import ToastFeedback from '@/components/ToastFeedback.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import LiaisonBubble from '@/components/LiaisonBubble.vue'
@@ -11,7 +11,7 @@ import type { AnnouncementOut, ApplicationOut, ReviewResponse } from '@/api/type
 import { publishedGuide, type GuideBook } from '@/data/publishedGuide'
 import { formatDateTime, statusLabel } from '@/utils/statusLabel'
 
-type Tab = 'todo' | 'mail' | 'account' | 'site' | 'settings' | 'roster'
+type Tab = 'todo' | 'mail' | 'account' | 'site' | 'roster'
 type SiteKind = 'slides' | 'news' | 'guide' | 'pub'
 type AccountKind = 'students' | 'mentors' | 'orgs'
 
@@ -84,7 +84,6 @@ const tabs: { id: Tab; label: string }[] = [
   { id: 'mail', label: '社区来信' },
   { id: 'account', label: '账号' },
   { id: 'site', label: '站点内容' },
-  { id: 'settings', label: '平台设置' },
 ]
 
 const tab = ref<Tab>('todo')
@@ -156,7 +155,15 @@ const bookKey = ref('')
 const chapterId = ref('')
 
 const orgForm = ref({ name: '', slug: '', description: '', admin_name: '', admin_email: '' })
-const created = ref('')
+const createOrgOpen = ref(false)
+const createdCreds = ref<{
+  name: string
+  adminName: string
+  email: string
+  password: string | null
+  invite: string
+  reused: boolean
+} | null>(null)
 const rosterMonth = ref(new Date().toISOString().slice(0, 7))
 const roster = ref<{ application_id: number; project_title: string; community_name: string; student_name?: string | null; finished_at?: string | null }[]>([])
 const rosterMonths = ref<string[]>([])
@@ -222,7 +229,115 @@ function readTab(value: unknown): Tab {
   const name = String(value || 'todo')
   if (name === 'publicity') return 'site'
   if (name === 'final' || name === 'case') return 'todo'
+  if (name === 'settings') return 'account'
   return tabs.some((item) => item.id === name) ? (name as Tab) : 'todo'
+}
+
+function openCreateOrg() {
+  createdCreds.value = null
+  msg.value = ''
+  createOrgOpen.value = true
+  accountKind.value = 'orgs'
+  openTab('account')
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    note('已复制')
+  } catch {
+    fail('复制失败，请手动选中复制')
+  }
+}
+
+const viewPwdOpen = ref(false)
+const viewPwdShow = ref(false)
+const viewPwdArchive = ref('')
+const viewPwd = ref<{
+  id: number
+  name: string
+  email: string
+  password: string | null
+} | null>(null)
+
+async function viewOrgPassword(row: Person) {
+  busy.value = true
+  viewPwdShow.value = false
+  viewPwdArchive.value = ''
+  try {
+    const { data } = await api.get<{
+      email: string
+      password: string | null
+      community_name: string
+    }>(`/committee/communities/${row.id}/admin-password`)
+    viewPwd.value = {
+      id: row.id,
+      name: data.community_name || row.name,
+      email: data.email,
+      password: data.password,
+    }
+    viewPwdOpen.value = true
+    if (data.password) viewPwdShow.value = true
+  } catch (e: unknown) {
+    fail(e instanceof Error ? e.message : '查看失败')
+  } finally {
+    busy.value = false
+  }
+}
+
+async function archiveOrgPassword() {
+  if (!viewPwd.value) return
+  const plain = viewPwdArchive.value.trim()
+  if (plain.length < 6) {
+    fail('请输入至少 6 位当前登录密码')
+    return
+  }
+  busy.value = true
+  try {
+    const { data } = await api.post<{
+      email: string
+      password: string | null
+      community_name: string
+    }>(`/committee/communities/${viewPwd.value.id}/admin-password`, { password: plain })
+    viewPwd.value = {
+      id: viewPwd.value.id,
+      name: data.community_name || viewPwd.value.name,
+      email: data.email,
+      password: data.password,
+    }
+    viewPwdArchive.value = ''
+    viewPwdShow.value = true
+    note('已存档，之后可直接查看')
+  } catch (e: unknown) {
+    fail(e instanceof Error ? e.message : '存档失败')
+  } finally {
+    busy.value = false
+  }
+}
+
+async function reissueOrgPassword() {
+  if (!viewPwd.value) return
+  busy.value = true
+  try {
+    const { data } = await api.post<{
+      email: string
+      password: string | null
+      community_name: string
+    }>(`/committee/communities/${viewPwd.value.id}/admin-password/reissue`)
+    viewPwd.value = {
+      id: viewPwd.value.id,
+      name: data.community_name || viewPwd.value.name,
+      email: data.email,
+      password: data.password,
+    }
+    viewPwdArchive.value = ''
+    viewPwdShow.value = true
+    note('已补发新密码，请立刻复制交给对方')
+  } catch (e: unknown) {
+    fail(e instanceof Error ? e.message : '补发失败')
+  } finally {
+    busy.value = false
+  }
 }
 
 function openTab(next: Tab) {
@@ -268,14 +383,14 @@ const counts = computed(() => ({
 
 async function searchAccounts() {
   accountPage.value = 1
-  await loadDirectory()
+  await loadAccounts()
 }
 
 function shiftAccount(step: number) {
   const next = accountPage.value + step
   if (next < 1 || next > accountPageCount.value) return
   accountPage.value = next
-  void loadDirectory()
+  void loadAccounts()
 }
 
 async function loadFinals() {
@@ -312,34 +427,35 @@ async function loadCases() {
 
 let accountLoadSeq = 0
 
-async function loadFacets(seq = ++accountLoadSeq) {
+async function loadAccounts(seq = ++accountLoadSeq) {
   const kind = accountKind.value
   const role = kind === 'orgs' ? 'org' : kind === 'mentors' ? 'mentor' : 'student'
-  const { data } = await api.get<typeof facets.value>('/committee/directory/facets', { params: { role } })
-  if (seq !== accountLoadSeq || accountKind.value !== kind) return
-  facets.value = data
-}
-
-async function loadDirectory(seq = ++accountLoadSeq) {
-  const kind = accountKind.value
-  const role = kind === 'orgs' ? 'org' : kind === 'mentors' ? 'mentor' : 'student'
-  const { data } = await api.get<{ total: number; rows: Person[] }>('/committee/directory', {
-    params: {
-      role,
-      name: colFilters.value.name,
-      email: colFilters.value.email,
-      org: kind === 'orgs' ? '' : colFilters.value.org,
-      invite: kind === 'orgs' ? colFilters.value.org : '',
-      status: colFilters.value.status,
-      q: accountQuery.value.trim(),
-      page: accountPage.value,
-      page_size: accountPageSize,
-    },
-  })
-  if (seq !== accountLoadSeq || accountKind.value !== kind) return
-  accountTotal.value = data.total
-  accountRowsLive.value = data.rows
-  if (accountPage.value > accountPageCount.value) accountPage.value = accountPageCount.value
+  try {
+    const [dir, fac] = await Promise.all([
+      api.get<{ total: number; rows: Person[] }>('/committee/directory', {
+        params: {
+          role,
+          name: colFilters.value.name,
+          email: colFilters.value.email,
+          org: kind === 'orgs' ? '' : colFilters.value.org,
+          invite: kind === 'orgs' ? colFilters.value.org : '',
+          status: colFilters.value.status,
+          q: accountQuery.value.trim(),
+          page: accountPage.value,
+          page_size: accountPageSize,
+        },
+      }),
+      api.get<typeof facets.value>('/committee/directory/facets', { params: { role } }),
+    ])
+    if (seq !== accountLoadSeq || accountKind.value !== kind) return
+    accountTotal.value = dir.data.total
+    accountRowsLive.value = dir.data.rows
+    facets.value = fac.data
+    if (accountPage.value > accountPageCount.value) accountPage.value = accountPageCount.value
+  } catch (e: unknown) {
+    if (seq !== accountLoadSeq) return
+    fail(e instanceof Error ? e.message : '账号列表加载失败')
+  }
 }
 
 async function loadSite() {
@@ -368,8 +484,7 @@ async function load() {
     loadPublicity().catch(() => undefined),
     loadMail().catch(() => undefined),
     loadCases().catch(() => undefined),
-    loadDirectory().catch(() => undefined),
-    loadFacets().catch(() => undefined),
+    loadAccounts().catch(() => undefined),
     loadSite().catch(() => undefined),
   ])
 }
@@ -548,13 +663,13 @@ async function decide(decision: 'approve' | 'reject') {
 
 async function toggleUser(row: Person) {
   await api.post(`/committee/users/${row.id}/disabled`, { disabled: !row.disabled })
-  await loadDirectory()
+  await loadAccounts()
 }
 
 async function toggleOrg(row: Person) {
   try {
     await api.post(`/committee/communities/${row.id}/disabled`, { disabled: !row.disabled })
-    await loadDirectory()
+    await loadAccounts()
   } catch (e: unknown) {
     fail(e instanceof Error ? e.message : '停用失败')
   }
@@ -575,7 +690,7 @@ async function confirmRetireAccount() {
   try {
     const { data } = await api.post<{ status: string }>(`/committee/communities/${row.id}/retire`)
     note(data.status === 'suspended' ? '已停止报名，记录保留' : '已从公开列表移除')
-    await loadDirectory()
+    await loadAccounts()
   } catch (e: unknown) {
     fail(e instanceof Error ? e.message : '处理失败')
   }
@@ -585,10 +700,10 @@ function builtinSlides(): Slide[] {
   return [
     {
       id: 'intern',
-      title: '华科开源原子\n开源实习管理系统',
+      title: '华科大开源实习管理系统',
       lead: '华中科技大学开放原子开源俱乐部面向真实运营场景：社区报名、项目发布、学生申请、三级审核、中选与结项公示。',
       meta: '活动流程全年可演示',
-      image: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1800&q=80',
+      image: '/heroes/hero-intern.jpg',
       primaryLabel: '查看项目',
       primaryTo: '/projects',
       secondaryLabel: '参与指南',
@@ -596,7 +711,7 @@ function builtinSlides(): Slide[] {
       live: true,
       jump: 'link',
       link: '/projects',
-      pageTitle: '华科开源原子',
+      pageTitle: '华科大开源实习管理系统',
       pageBody: '',
       buttonLabel: '查看项目',
     },
@@ -605,7 +720,7 @@ function builtinSlides(): Slide[] {
       title: '打通实习全链路\n从申请到结项',
       lead: '组织报名、发布项目、学生申请、导师与组委会审核、结项公示。',
       meta: '学生入口 · 组织入口',
-      image: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1800&q=80',
+      image: '/heroes/hero-process.jpg',
       primaryLabel: '阅读指南',
       primaryTo: '/guide',
       secondaryLabel: '按社区选择',
@@ -622,7 +737,7 @@ function builtinSlides(): Slide[] {
       title: '连接俱乐部基础设施\n镜像 · 代码仓 · 文档',
       lead: '项目仓库与结项合并请求对接校内代码仓，门户聚合镜像站与公开文档。',
       meta: '薄集成 · 厚运营',
-      image: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1800&q=80',
+      image: '/heroes/hero-club.jpg',
       primaryLabel: '最新动态',
       primaryTo: '/news',
       secondaryLabel: '参与指南',
@@ -730,6 +845,10 @@ function addTable(item: { blocks?: Block[]; body?: string | null; [key: string]:
   })
 }
 
+function mediaSrc(url?: string | null) {
+  return withFileAuth(url) || url || ''
+}
+
 async function addMedia(
   item: { blocks?: Block[]; body?: string | null; [key: string]: unknown },
   kind: 'image' | 'video',
@@ -745,9 +864,9 @@ async function addMedia(
     const body = new FormData()
     body.append('file', file)
     const { data } = await api.post<{ url: string }>(`/uploads/${kind}`, body)
-    item.blocks = item.blocks || []
-    item.blocks.push({ id: `b-${Date.now()}`, type: kind, url: data.url })
-    note(kind === 'image' ? '图片已放进正文' : '视频已放进正文')
+    const list = ensureBlocks(item)
+    list.push({ id: `b-${Date.now()}`, type: kind, url: data.url })
+    note(kind === 'image' ? '已插入图片链接，预览可看图' : '已插入视频链接，预览可播放')
   } catch (err: unknown) {
     error.value = err instanceof Error ? err.message : '上传失败'
   } finally {
@@ -812,6 +931,11 @@ const previewSlides = computed(() => {
 })
 const fileRef = ref<HTMLInputElement | null>(null)
 
+function slideListName(item: Slide) {
+  const name = (item.pageTitle || item.title || '').trim()
+  return name || '未命名大图'
+}
+
 async function uploadSlideImage(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (fileRef.value) fileRef.value.value = ''
@@ -849,6 +973,13 @@ function addSlide() {
     return
   }
   const id = `s-${Date.now()}`
+  const used = new Set(slides.value.map((item) => (item.pageTitle || '').trim()))
+  let pageTitle = '新的活动'
+  let n = 2
+  while (used.has(pageTitle)) {
+    pageTitle = `新的活动 ${n}`
+    n += 1
+  }
   slides.value.unshift({
     id,
     title: '',
@@ -862,7 +993,7 @@ function addSlide() {
     live: true,
     jump: 'page',
     link: '/projects',
-    pageTitle: '新的活动',
+    pageTitle,
     pageBody: '在这里写这次上新要说明的内容。首页只放图片，按钮打开这一页。',
     buttonLabel: '了解这次活动',
   })
@@ -1104,25 +1235,34 @@ async function saveGuide() {
 async function openOrg() {
   if (!orgForm.value.name.trim() || !orgForm.value.admin_email.trim()) return
   busy.value = true
+  msg.value = ''
   try {
+    const name = orgForm.value.name.trim()
+    const adminName = orgForm.value.admin_name.trim()
+    const email = orgForm.value.admin_email.trim().toLowerCase()
     const { data } = await api.post<{
       id: number
       invite_code?: string | null
       admin_initial_password?: string | null
     }>('/communities', {
-      name: orgForm.value.name.trim(),
+      name,
       slug: orgForm.value.slug.trim() || `org-${Date.now()}`,
       description: orgForm.value.description || null,
-      admin_name: orgForm.value.admin_name.trim(),
-      admin_email: orgForm.value.admin_email.trim(),
+      admin_name: adminName,
+      admin_email: email,
     })
-    const pw = data.admin_initial_password
-      ? `初始密码 ${data.admin_initial_password}（只显示一次，请立刻交给对方）`
-      : '该邮箱已有组织账号，未重置密码'
-    created.value = `已开通「${orgForm.value.name.trim()}」，社区账号 ${orgForm.value.admin_name || '管理员'} ${orgForm.value.admin_email.trim()}，${pw}。用学生入口选「组织」登录。${data.invite_code ? `导师邀请码 ${data.invite_code}。` : ''}`
+    createdCreds.value = {
+      name,
+      adminName: adminName || '管理员',
+      email,
+      password: data.admin_initial_password || null,
+      invite: data.invite_code || '',
+      reused: !data.admin_initial_password,
+    }
     orgForm.value = { name: '', slug: '', description: '', admin_name: '', admin_email: '' }
+    await searchAccounts()
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '开通失败'
+    fail(e instanceof Error ? e.message : '开通失败')
   } finally {
     busy.value = false
   }
@@ -1138,9 +1278,7 @@ watch(accountKind, () => {
   colFilters.value = { name: '', email: '', org: '', status: '' }
   accountRowsLive.value = []
   facets.value = { names: [], emails: [], orgs: [], statuses: ['使用中', '已停用'] }
-  const seq = ++accountLoadSeq
-  void loadFacets(seq)
-  void loadDirectory(seq)
+  void loadAccounts()
 })
 
 watch(
@@ -1232,7 +1370,7 @@ onMounted(load)
       <div class="panel-bar">
         <div>
           <h2>每月结项名单</h2>
-          <p>导师验收通过、社区报送后会出现在这里；社区报送时组委会自动接收。按结项月份给公示用。学生奖励材料留在社区。</p>
+          <p>导师验收通过、社区审核通过学生的实习申请后会出现在这里；组委会自动接收。按结项月份给公示用。学生实习材料留在社区。</p>
         </div>
         <label>
           月份
@@ -1283,6 +1421,12 @@ onMounted(load)
       <div class="account-bar">
         <input v-model="accountQuery" type="search" placeholder="输入姓名、邮箱或组织，回车查找" @keyup.enter="searchAccounts" />
         <button class="btn" type="button" @click="searchAccounts">查找</button>
+        <button
+          v-if="accountKind === 'orgs'"
+          class="btn"
+          type="button"
+          @click="openCreateOrg"
+        >创建</button>
         <span>共 {{ accountTotal }} 条</span>
       </div>
       <div class="task-scroll">
@@ -1343,6 +1487,9 @@ onMounted(load)
                   <button class="manage-link" type="button" @click="toggleOrg(row)">
                     {{ row.disabled ? '恢复' : '停用' }}
                   </button>
+                  <button class="manage-link" type="button" :disabled="busy" @click="viewOrgPassword(row)">
+                    查看密码
+                  </button>
                   <button class="manage-link" type="button" @click="retireAccount(row)">停止报名</button>
                 </template>
               </td>
@@ -1372,7 +1519,7 @@ onMounted(load)
           <template v-if="siteKind === 'slides'">
             <button class="side-add" type="button" @click="addSlide">新增大图</button>
             <button v-for="item in slides" :key="item.id" type="button" class="row" :class="{ on: slideId === item.id }" @click="slideId = item.id">
-              <strong>{{ item.pageTitle || item.title || '未命名大图' }}</strong>
+              <strong>{{ slideListName(item) }}</strong>
               <span>{{ item.live ? '展示中' : '已下架' }}</span>
             </button>
           </template>
@@ -1425,6 +1572,9 @@ onMounted(load)
               </button>
               <p class="meta">JPG / PNG / WebP / GIF，最大 5MB</p>
             </section>
+            <label class="span-2">这条大图的名称（左边列表用，方便区分）
+              <input v-model="currentSlide.pageTitle" required maxlength="80" placeholder="例如：10 月结项活动" />
+            </label>
             <label>图上的标题（可不填）<textarea v-model="currentSlide.title" rows="3" /></label>
             <label>图上的一句说明（可不填）<textarea v-model="currentSlide.lead" rows="3" /></label>
             <label>按钮上的字<input v-model="currentSlide.buttonLabel" placeholder="例如：了解这次活动" /></label>
@@ -1440,8 +1590,7 @@ onMounted(load)
               </select>
             </label>
             <template v-if="buttonGoes === 'page'">
-              <label>活动页标题<input v-model="currentSlide.pageTitle" /></label>
-              <label>活动页正文<textarea v-model="currentSlide.pageBody" rows="4" /></label>
+              <label class="span-2">活动页正文<textarea v-model="currentSlide.pageBody" rows="4" /></label>
             </template>
             <label v-else-if="buttonGoes === 'custom'" class="span-2">按钮网址<input v-model="currentSlide.link" placeholder="https:// 或 /projects" /></label>
             <label>再放一个按钮
@@ -1546,11 +1695,11 @@ onMounted(load)
             <strong>{{ openedPub.title }}</strong>
             <template v-for="block in decodeBlocks(openedPub.body)" :key="block.id">
               <p v-if="block.type === 'text'">{{ block.text }}</p>
-              <img v-else-if="block.type === 'image' && block.url" :src="block.url" alt="" />
+              <img v-else-if="block.type === 'image' && block.url" :src="mediaSrc(block.url)" alt="" />
               <table v-else-if="block.type === 'table'" class="paper-table">
                 <tr v-for="(row, ri) in block.rows" :key="ri"><td v-for="(cell, ci) in row" :key="ci">{{ cell }}</td></tr>
               </table>
-              <video v-else-if="block.url" :src="block.url" controls />
+              <video v-else-if="block.type === 'video' && block.url" :src="mediaSrc(block.url)" controls />
             </template>
           </article>
           <p v-else-if="siteKind === 'pub'" class="empty">左边写一条公示，或打开终审留下的草稿。</p>
@@ -1559,26 +1708,127 @@ onMounted(load)
       </div>
     </section>
 
-    <section v-else class="panel settings">
-      <article>
-        <h2>开通组织</h2>
-        <p>开通后会同时创建该社区的组织账号，用来收学生的奖励申请。系统会生成一次性随机初始密码（只显示一次），从学生入口选「组织」登录。</p>
+  </div>
+
+  <div v-if="viewPwdOpen && viewPwd" class="home-modal" @click.self="viewPwdOpen = false">
+    <div class="create-org-sheet" role="dialog" aria-label="查看组织密码">
+      <div class="preview-bar">
+        <strong>组织密码</strong>
+        <button type="button" class="close" @click="viewPwdOpen = false">关闭</button>
+      </div>
+      <p class="create-org-hint">
+        组委会可随时查看当前密码。社区自己改密后，这里也会同步成新密码。不可在此重置。
+      </p>
+      <dl class="cred-box">
+        <div>
+          <dt>组织</dt>
+          <dd>{{ viewPwd.name }}</dd>
+        </div>
+        <div>
+          <dt>邮箱</dt>
+          <dd>
+            <code>{{ viewPwd.email }}</code>
+            <button type="button" class="manage-link" @click="copyText(viewPwd.email)">复制</button>
+          </dd>
+        </div>
+        <div>
+          <dt>密码</dt>
+          <dd v-if="viewPwd.password">
+            <code>{{ viewPwdShow ? viewPwd.password : '••••••••••••' }}</code>
+            <button type="button" class="manage-link" @click="viewPwdShow = !viewPwdShow">
+              {{ viewPwdShow ? '隐藏' : '显示' }}
+            </button>
+            <button type="button" class="manage-link" @click="copyText(viewPwd.password!)">复制</button>
+          </dd>
+          <dd v-else class="archive-pwd">
+            <p class="muted-cred">
+              这是更早开通、尚未存档的账号。若还记得当前能登录的密码，可先存档；若已无法登录，请补发新密码。
+            </p>
+            <input
+              v-model="viewPwdArchive"
+              type="password"
+              placeholder="当前登录密码（可选）"
+              autocomplete="off"
+              @keyup.enter="archiveOrgPassword"
+            />
+            <div class="acts">
+              <button class="btn sm" type="button" :disabled="busy" @click="archiveOrgPassword">
+                存档并查看
+              </button>
+              <button class="btn sm secondary" type="button" :disabled="busy" @click="reissueOrgPassword">
+                补发新密码
+              </button>
+            </div>
+          </dd>
+        </div>
+      </dl>
+      <div class="acts">
+        <button class="btn" type="button" @click="viewPwdOpen = false">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="createOrgOpen" class="home-modal" @click.self="createOrgOpen = false">
+    <div class="create-org-sheet" role="dialog" aria-label="创建组织">
+      <div class="preview-bar">
+        <strong>{{ createdCreds ? '账号信息' : '创建组织' }}</strong>
+        <button type="button" class="close" @click="createOrgOpen = false">关闭</button>
+      </div>
+      <template v-if="createdCreds">
+        <p class="create-org-hint">
+          {{ createdCreds.password ? '请复制交给对方。之后也可在账号列表点「查看密码」。' : '该邮箱已有组织账号，密码未改动；可在列表点「查看密码」。' }}
+          登录：学生入口 → 选「组织」。改密由社区自己在个人中心完成。
+        </p>
+        <dl class="cred-box">
+          <div>
+            <dt>组织</dt>
+            <dd>{{ createdCreds.name }}</dd>
+          </div>
+          <div v-if="createdCreds.adminName">
+            <dt>管理员</dt>
+            <dd>{{ createdCreds.adminName }}</dd>
+          </div>
+          <div>
+            <dt>邮箱</dt>
+            <dd>
+              <code>{{ createdCreds.email }}</code>
+              <button type="button" class="manage-link" @click="copyText(createdCreds.email)">复制</button>
+            </dd>
+          </div>
+          <div v-if="createdCreds.password">
+            <dt>密码</dt>
+            <dd>
+              <code>{{ createdCreds.password }}</code>
+              <button type="button" class="manage-link" @click="copyText(createdCreds.password!)">复制</button>
+            </dd>
+          </div>
+          <div v-if="createdCreds.invite">
+            <dt>导师邀请码</dt>
+            <dd>
+              <code>{{ createdCreds.invite }}</code>
+              <button type="button" class="manage-link" @click="copyText(createdCreds.invite)">复制</button>
+            </dd>
+          </div>
+        </dl>
+        <div class="acts">
+          <button class="btn" type="button" @click="createOrgOpen = false; createdCreds = null">知道了</button>
+        </div>
+      </template>
+      <template v-else>
+        <p class="create-org-hint">开通后会同时创建该社区的组织账号，用来收学生的实习申请。系统会生成一次性随机初始密码（只显示一次），从学生入口选「组织」登录。</p>
         <form class="stack" @submit.prevent="openOrg">
           <input v-model="orgForm.name" placeholder="组织名称" required />
           <input v-model="orgForm.slug" placeholder="英文标识，可空" />
           <input v-model="orgForm.description" placeholder="一句简介" />
           <input v-model="orgForm.admin_name" placeholder="管理员姓名" />
           <input v-model="orgForm.admin_email" type="email" placeholder="管理员邮箱" required />
-          <button class="btn" type="submit" :disabled="busy">开通</button>
+          <div class="acts">
+            <button class="btn" type="submit" :disabled="busy">{{ busy ? '开通中…' : '开通' }}</button>
+            <button class="btn secondary" type="button" @click="createOrgOpen = false">取消</button>
+          </div>
         </form>
-        <p v-if="created">{{ created }}</p>
-      </article>
-      <article>
-        <h2>学生平台绑定</h2>
-        <p>配置 GitHub、Gitee、GitCode、GitLink 和俱乐部 Gitea。不影响终审和公示。</p>
-        <RouterLink class="btn" to="/committee/oauth">进入绑定配置</RouterLink>
-      </article>
-    </section>
+      </template>
+    </div>
   </div>
 
   <div v-if="postPreview" class="home-modal" @click.self="postPreview = null">
@@ -1600,21 +1850,21 @@ onMounted(load)
               <h2>{{ section.title }}</h2>
               <template v-for="block in section.blocks" :key="block.id">
                 <p v-if="block.type === 'text'">{{ block.text }}</p>
-                <img v-else-if="block.type === 'image' && block.url" :src="block.url" alt="" />
+                <img v-else-if="block.type === 'image' && block.url" :src="mediaSrc(block.url)" alt="" />
                 <table v-else-if="block.type === 'table'" class="paper-table">
                   <tr v-for="(row, ri) in block.rows" :key="ri"><td v-for="(cell, ci) in row" :key="ci">{{ cell }}</td></tr>
                 </table>
-                <video v-else-if="block.url" :src="block.url" controls />
+                <video v-else-if="block.type === 'video' && block.url" :src="mediaSrc(block.url)" controls />
               </template>
             </section>
           </template>
           <template v-else v-for="block in postPreview.blocks" :key="block.id">
             <p v-if="block.type === 'text'">{{ block.text }}</p>
-            <img v-else-if="block.type === 'image' && block.url" :src="block.url" alt="" />
+            <img v-else-if="block.type === 'image' && block.url" :src="mediaSrc(block.url)" alt="" />
             <table v-else-if="block.type === 'table'" class="paper-table">
               <tr v-for="(row, ri) in block.rows" :key="ri"><td v-for="(cell, ci) in row" :key="ci">{{ cell }}</td></tr>
             </table>
-            <video v-else-if="block.url" :src="block.url" controls />
+            <video v-else-if="block.type === 'video' && block.url" :src="mediaSrc(block.url)" controls />
           </template>
         </article>
       </div>
@@ -1631,7 +1881,7 @@ onMounted(load)
         <div class="topnav-inner">
           <span class="brand">
             <img src="/logos/penguin-blue.svg" alt="" />
-            <span><strong>华科开源原子</strong><small>开源实习管理系统</small></span>
+            <span><strong>华科大开源实习管理系统</strong><small>HUST OpenAtom</small></span>
           </span>
           <nav>
             <span>首页</span><span>查看项目</span><span>结项公示</span><span>最新动态</span><span>参与指南</span>
@@ -1684,11 +1934,24 @@ onMounted(load)
 .todos button { border: 1px solid #d6deea; background: #f7f9fc; border-radius: 10px; padding: 18px; text-align: left; cursor: pointer; font: inherit; }
 .todos b { display: block; font-size: 1.4rem; color: #1e3a5f; }
 .work > .filters { padding: 12px 12px 0; }
-.split { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 640px; }
+.split {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  height: calc(100vh - 140px);
+  min-height: 420px;
+  overflow: hidden;
+}
 .work > .filters { padding: 12px 12px 0; }
-.work > .split { min-height: 600px; }
-aside { border-right: 1px solid #e5e7eb; padding: 12px; background: #f7f9fc; overflow: auto; }
-.read { padding: 16px 18px; }
+.work > .split { height: calc(100vh - 180px); min-height: 420px; }
+aside {
+  border-right: 1px solid #e5e7eb;
+  padding: 12px;
+  background: #f7f9fc;
+  min-height: 0;
+  overflow: auto;
+  overflow-y: auto;
+}
+.read { padding: 16px 18px; min-height: 0; overflow: auto; }
 .filters { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
 .filters button, .btn.sm { border: 1px solid #c5d0e0; background: #fff; border-radius: 999px; padding: 4px 10px; cursor: pointer; font: inherit; }
 .filters button.on { background: #1677ff; color: #fff; border-color: #1677ff; }
@@ -1797,8 +2060,21 @@ textarea, input, select { width: 100%; box-sizing: border-box; border: 1px solid
 .composer img, .composer video, .news-preview img, .news-preview video { width: min(100%, 320px); border-radius: 8px; }
 .file { display: none; }
 .side-note { padding: 0 4px 8px; }
-.mail { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 640px; }
-.contacts { border-right: 1px solid #e5e7eb; background: #f7f9fc; padding: 8px; overflow: auto; }
+.mail {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  height: calc(100vh - 140px);
+  min-height: 420px;
+  overflow: hidden;
+}
+.contacts {
+  border-right: 1px solid #e5e7eb;
+  background: #f7f9fc;
+  padding: 8px;
+  min-height: 0;
+  overflow: auto;
+  overflow-y: auto;
+}
 .contacts-title { margin: 4px 8px 8px; color: #64748b; font-size: 0.82rem; }
 .contact { display: flex; gap: 10px; align-items: center; width: 100%; text-align: left; border: 0; background: transparent; border-radius: 8px; padding: 10px 8px; cursor: pointer; font: inherit; }
 .contact.on { background: #e8f3ff; }
@@ -1806,9 +2082,24 @@ textarea, input, select { width: 100%; box-sizing: border-box; border: 1px solid
 .who { min-width: 0; }
 .who strong, .who em { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .who em { color: #94a3b8; font-style: normal; font-size: 0.78rem; margin-top: 2px; }
-.chat { display: flex; flex-direction: column; min-height: 640px; background: #fff; }
-.chat header { padding: 14px 16px; border-bottom: 1px solid #eef2f6; font-weight: 700; color: #1e3a5f; }
-.chat .log { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #fff;
+}
+.chat header { padding: 14px 16px; border-bottom: 1px solid #eef2f6; font-weight: 700; color: #1e3a5f; flex: 0 0 auto; }
+.chat .log {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
 .bubble { max-width: min(72%, 520px); background: #f4f6f8; border-radius: 8px; padding: 8px 10px; align-self: flex-start; }
 .bubble b { display: block; font-size: 0.75rem; color: #64748b; font-weight: 650; margin-bottom: 2px; }
 .bubble.mine { align-self: flex-end; background: #1677ff; color: #fff; }
@@ -1816,10 +2107,75 @@ textarea, input, select { width: 100%; box-sizing: border-box; border: 1px solid
 .chat form, .chat :deep(.composer) { padding: 12px 16px 16px; border-top: 1px solid #eef2f6; }
 .chat :deep(.composer) { align-items: stretch; }
 .chat textarea { margin: 0; }
-.settings { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 16px; padding: 16px; }
+.create-org-sheet {
+  width: min(480px, 100%);
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px 18px 18px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+}
+.create-org-hint {
+  margin: 0 0 12px;
+  color: #64748b;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+.create-org-sheet .stack input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.cred-box {
+  margin: 0 0 14px;
+  display: grid;
+  gap: 10px;
+}
+.cred-box > div {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+.cred-box dt {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.85rem;
+}
+.cred-box dd {
+  margin: 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.cred-box code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.95rem;
+  background: #f4f6f8;
+  border-radius: 6px;
+  padding: 4px 8px;
+  word-break: break-all;
+}
+.muted-cred {
+  color: #64748b;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+.archive-pwd {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.archive-pwd input {
+  width: min(280px, 100%);
+  box-sizing: border-box;
+}
 .error { color: #dc2626; }
 .ok { color: #059669; }
 @media (max-width: 900px) {
-  .split, .todos, .settings, .mail { grid-template-columns: 1fr; }
+  .split, .todos, .mail { grid-template-columns: 1fr; }
+  .split, .mail, .work > .split { height: auto; min-height: 420px; overflow: visible; }
+  .contacts, aside { max-height: 40vh; }
+  .chat { min-height: 360px; }
 }
 </style>

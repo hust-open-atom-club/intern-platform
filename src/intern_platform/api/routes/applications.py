@@ -17,7 +17,6 @@ from intern_platform.dependencies.ledger import (
 from intern_platform.models.application import Application
 from intern_platform.models.application_message import ApplicationMessage
 from intern_platform.models.project import Project
-from intern_platform.models.role import Role, UserRole
 from intern_platform.models.user import User
 from intern_platform.schemas.application import TransitionRequest, TransitionResponse
 from intern_platform.schemas.business import ApplicationOut, ApplicationUpdate, RewardDecision
@@ -34,14 +33,6 @@ from intern_platform.services.notification_service import NotificationService
 from intern_platform.services.state_machine import IllegalTransitionError
 
 router = APIRouter(prefix="/applications", tags=["applications"])
-
-
-class CommunityFinalBody(BaseModel):
-    note: str = Field(min_length=1, max_length=2000)
-    attachment_url: str | None = None
-    attachment_name: str | None = None
-    report_url: str | None = None
-    code_url: str | None = None
 
 
 class MentorNoticeBody(BaseModel):
@@ -108,10 +99,10 @@ def reward_inbox(
     auth: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> RewardInboxOut:
-    """学生奖励申请只给所属社区管理员，组委会不接收。"""
+    """学生实习申请只给所属社区管理员，组委会不接收。"""
     cids = auth.community_ids_for("community_admin")
     if not cids:
-        raise HTTPException(status_code=403, detail="仅社区管理员可查看奖励申请")
+        raise HTTPException(status_code=403, detail="仅社区管理员可查看实习申请")
     keyword = q.strip().lower()
     apps = db.execute(
         select(Application, Project, User)
@@ -273,110 +264,6 @@ def start_progress(
     return TransitionResponse(
         application_id=result.application.id,
         from_status=result.from_status,
-        to_status=result.to_status,
-        action=result.action,
-        idempotent_replay=result.idempotent_replay,
-        version=result.application.version,
-    )
-
-
-@router.post("/{application_id}/community-final", response_model=TransitionResponse)
-def submit_community_final(
-    application_id: int,
-    body: CommunityFinalBody,
-    auth: AuthUser = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    ledger: LedgerRequestContext = Depends(get_ledger_context),
-) -> TransitionResponse:
-    """导师通过结项后，社区把材料说明交给组委会。"""
-    key = require_idempotency_key(ledger.idempotency_key)
-    app = ApplicationService(db).get(application_id)
-    if app is None or app.project is None:
-        raise HTTPException(status_code=404, detail="申请不存在")
-    if not auth.has_community_role("community_admin", app.project.community_id):
-        raise HTTPException(status_code=403, detail="仅本社区管理员可提交结项材料")
-    if app.status != "community_final_review":
-        raise HTTPException(status_code=409, detail="当前不在社区报送环节")
-    lines = [body.note.strip()]
-    from intern_platform.services.upload_urls import require_safe_upload_url
-
-    try:
-        safe_attach = require_safe_upload_url(
-            body.attachment_url, field="结项附件", owner_user_id=auth.id
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if safe_attach:
-        lines.append(f"交付件：{body.attachment_name or '材料'} {safe_attach}")
-    if body.report_url:
-        lines.append(f"设计文档：{body.report_url}")
-    if body.code_url:
-        lines.append(f"代码链接：{body.code_url}")
-    comment = "\n".join(lines)
-    ctx = TransitionContext(
-        actor_id=auth.id,
-        action="submit_community_final",
-        actor_role="community_admin",
-        comment=comment,
-        request_id=ledger.request_id,
-        correlation_id=ledger.request_id,
-        idempotency_key=key,
-        trace_id=ledger.trace_id,
-        ip=ledger.ip,
-        user_agent=ledger.user_agent,
-    )
-    workflow = ApplicationWorkflowService(db)
-    from_status = app.status
-    try:
-        mid = workflow.transition_by_id(application_id, ctx, commit=False)
-        # 社区报送后组委会直接接收并完成结项，不再单独终审一次
-        result = workflow.transition(
-            mid.application,
-            TransitionContext(
-                actor_id=auth.id,
-                action="approve_committee_final",
-                actor_role="community_admin",
-                comment="社区报送后自动计入组委会结项名单",
-                request_id=ledger.request_id,
-                correlation_id=ledger.request_id,
-                idempotency_key=f"{key}#auto_committee",
-                trace_id=ledger.trace_id,
-                ip=ledger.ip,
-                user_agent=ledger.user_agent,
-                expected_version=mid.application.version,
-            ),
-        )
-    except IllegalTransitionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except OptimisticLockError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    title = app.project.title
-    NotificationService(db).create(
-        user_id=app.student_id,
-        title="结项已完成",
-        body=f"项目「{title}」社区已报送，组委会已自动接收，状态为已结项。",
-        kind="review_progress",
-        project_id=app.project_id,
-        application_id=app.id,
-    )
-    committee_role = db.scalar(select(Role).where(Role.code == "committee"))
-    if committee_role is not None:
-        user_ids = db.scalars(
-            select(UserRole.user_id).where(UserRole.role_id == committee_role.id)
-        ).all()
-        for uid in user_ids:
-            NotificationService(db).create(
-                user_id=uid,
-                title="社区已报送结项，已自动接收",
-                body=f"「{title}」申请 #{app.id} 已计入结项名单：{comment[:140]}",
-                kind="community_final",
-                project_id=app.project_id,
-                application_id=app.id,
-            )
-    db.commit()
-    return TransitionResponse(
-        application_id=result.application.id,
-        from_status=from_status,
         to_status=result.to_status,
         action=result.action,
         idempotent_replay=result.idempotent_replay,

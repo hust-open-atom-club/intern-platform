@@ -65,17 +65,23 @@ TRANSITION_MAP: dict[tuple[ApplicationStatus, TransitionAction], ApplicationStat
     (ApplicationStatus.MENTOR_FINAL_REVIEW, TransitionAction.REJECT_FINAL): ApplicationStatus.FINAL_REJECTED,
     (ApplicationStatus.COMMITTEE_FINAL_REVIEW, TransitionAction.APPROVE_COMMITTEE_FINAL): ApplicationStatus.COMPLETED,
     (ApplicationStatus.COMMITTEE_FINAL_REVIEW, TransitionAction.REJECT_FINAL): ApplicationStatus.FINAL_REJECTED,
-    # 名额预留后 / 开发中可放弃或取消（释放名额，可再次申请）
+    # 名额预留后 / 开发中 / 验收审核中可放弃或取消（释放名额，可再次申请）
     (ApplicationStatus.COMMUNITY_REVIEW, TransitionAction.WITHDRAW): ApplicationStatus.WITHDRAWN,
     (ApplicationStatus.COMMITTEE_REVIEW, TransitionAction.WITHDRAW): ApplicationStatus.WITHDRAWN,
     (ApplicationStatus.SELECTED, TransitionAction.WITHDRAW): ApplicationStatus.WITHDRAWN,
     (ApplicationStatus.IN_PROGRESS, TransitionAction.WITHDRAW): ApplicationStatus.WITHDRAWN,
     (ApplicationStatus.FINAL_REJECTED, TransitionAction.WITHDRAW): ApplicationStatus.WITHDRAWN,
+    (ApplicationStatus.FINAL_SUBMITTED, TransitionAction.WITHDRAW): ApplicationStatus.WITHDRAWN,
+    (ApplicationStatus.MENTOR_FINAL_REVIEW, TransitionAction.WITHDRAW): ApplicationStatus.WITHDRAWN,
+    (ApplicationStatus.COMMUNITY_FINAL_REVIEW, TransitionAction.WITHDRAW): ApplicationStatus.WITHDRAWN,
     (ApplicationStatus.COMMUNITY_REVIEW, TransitionAction.CANCEL_ASSIGNMENT): ApplicationStatus.WITHDRAWN,
     (ApplicationStatus.COMMITTEE_REVIEW, TransitionAction.CANCEL_ASSIGNMENT): ApplicationStatus.WITHDRAWN,
     (ApplicationStatus.SELECTED, TransitionAction.CANCEL_ASSIGNMENT): ApplicationStatus.WITHDRAWN,
     (ApplicationStatus.IN_PROGRESS, TransitionAction.CANCEL_ASSIGNMENT): ApplicationStatus.WITHDRAWN,
     (ApplicationStatus.FINAL_REJECTED, TransitionAction.CANCEL_ASSIGNMENT): ApplicationStatus.WITHDRAWN,
+    (ApplicationStatus.FINAL_SUBMITTED, TransitionAction.CANCEL_ASSIGNMENT): ApplicationStatus.WITHDRAWN,
+    (ApplicationStatus.MENTOR_FINAL_REVIEW, TransitionAction.CANCEL_ASSIGNMENT): ApplicationStatus.WITHDRAWN,
+    (ApplicationStatus.COMMUNITY_FINAL_REVIEW, TransitionAction.CANCEL_ASSIGNMENT): ApplicationStatus.WITHDRAWN,
 }
 
 # 状态对应的当前审核节点

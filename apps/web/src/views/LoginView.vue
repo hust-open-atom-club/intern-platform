@@ -13,6 +13,7 @@ const portal = ref<Portal | null>(null)
 const email = ref('')
 const password = ref('')
 const error = ref('')
+const submitting = ref(false)
 
 watch(
   () => route.query.role,
@@ -36,7 +37,7 @@ const brandTitle = computed(() => {
 
 const brandLead = computed(() => {
   if (choosing.value) return '先选择身份，再进入对应登录页。账号体系统一，入口分开。'
-  if (portal.value === 'mentor') return '管理课题、审核申请与结项材料。'
+  if (portal.value === 'mentor') return '管理课题、审核申请与验收材料。'
   if (portal.value === 'org') return '维护社区主页、邀请导师、创建并分配项目。'
   return '浏览项目、提交申请，跟踪三级审核与结项进度。'
 })
@@ -83,6 +84,7 @@ function backToChoose() {
 
 async function onSubmit() {
   error.value = ''
+  submitting.value = true
   try {
     await auth.login(email.value.trim(), password.value)
     if (auth.hasRole('mentor') && !auth.hasRole('community_admin')) {
@@ -105,6 +107,8 @@ async function onSubmit() {
     router.push(auth.portalHome())
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '登录失败'
+  } finally {
+    submitting.value = false
   }
 }
 </script>
@@ -129,7 +133,7 @@ async function onSubmit() {
         </button>
         <button type="button" class="role-card" @click="choosePortal('mentor')">
           <strong>导师</strong>
-          <span>管理课题、审核申请与结项材料</span>
+          <span>管理课题、审核申请与验收材料</span>
         </button>
         <button type="button" class="role-card" @click="choosePortal('org')">
           <strong>组织</strong>
@@ -168,8 +172,8 @@ async function onSubmit() {
       <p v-if="error" class="error">{{ error }}</p>
 
       <div class="auth-actions">
-        <button class="submit-btn" type="submit" :disabled="auth.loading">
-          {{ auth.loading ? '登录中…' : '登录' }}
+        <button class="submit-btn" type="submit" :disabled="auth.loading || submitting">
+          {{ auth.loading || submitting ? '登录中…' : '登录' }}
         </button>
         <RouterLink v-if="portal === 'student'" class="ghost-btn" to="/register">注册</RouterLink>
         <RouterLink v-else-if="portal === 'mentor'" class="ghost-btn" to="/register/mentor">邀请码注册</RouterLink>

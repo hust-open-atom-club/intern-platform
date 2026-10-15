@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import api from '@/api/client'
+import { HERO_IMAGES, resolveHeroImage } from '@/utils/heroImages'
 
 const index = ref(0)
 let timer: number | undefined
@@ -9,12 +10,11 @@ let timer: number | undefined
 const defaultSlides = [
   {
     id: 'intern',
-    titleHtml: '华科开源原子<br />开源实习管理系统',
+    titleHtml: '华科大开源实习管理系统',
     lead:
       '华中科技大学开放原子开源俱乐部面向真实运营场景：社区报名、项目发布、学生申请、三级审核、中选与结项公示——让开源贡献可组织、可追溯。',
     meta: '活动流程全年可演示 · 企业级审核流水',
-    image:
-      'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1800&q=80',
+    image: HERO_IMAGES.intern,
     primary: { to: '/projects', label: '查看项目' },
     secondary: { to: '/guide', label: '参与指南' },
   },
@@ -24,8 +24,7 @@ const defaultSlides = [
     lead:
       '完整流程可演示：组织报名与审核 → 发布项目 → 学生申请及审核 → 中选 → 项目开发 → 结项审核（导师 + 组委会）→ 结项公示。',
     meta: '统一登录入口 · 分角色进入 · 公示透明',
-    image:
-      'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1800&q=80',
+    image: HERO_IMAGES.process,
     primary: { to: '/guide#sec-flow', label: '阅读完整指南' },
     secondary: { to: '/projects?tab=orgs', label: '按社区选择' },
   },
@@ -35,8 +34,7 @@ const defaultSlides = [
     lead:
       '不重复造轮子：项目仓库与结项合并请求对接校内代码仓，门户聚合镜像站与公开文档，成员加入仍遵循俱乐部协作与信息表流程。',
     meta: '薄集成 · 厚运营 · 可切换数据库',
-    image:
-      'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1800&q=80',
+    image: HERO_IMAGES.club,
     primary: { to: '/guide#sec-faq', label: '注意事项 FAQ' },
     secondary: { to: '/news', label: '最新动态' },
   },
@@ -94,7 +92,7 @@ function fromRemote(item: RemoteSlide) {
     titleHtml: (item.title || '').replace(/\n/g, '<br />'),
     lead: item.lead || '',
     meta: item.meta || '',
-    image: item.image || defaultSlides[0].image,
+    image: resolveHeroImage(item.image, item.id),
     href,
     external: href.startsWith('http'),
     buttonLabel: item.buttonLabel || item.primaryLabel || (jump === 'page' ? '了解这次活动' : '前往'),

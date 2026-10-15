@@ -83,6 +83,38 @@ def upload_zip(token):
         return json.loads(res.read().decode())["url"]
 
 
+def ensure_project(org_email: str, mentor_email: str, title: str) -> dict:
+    """组织为指定导师创建并发布临时课题（种子不再预置演示课题）。"""
+    ot, _ = login(org_email)
+    mt, mu = login(mentor_email)
+    assert ot and mt, (org_email, mentor_email)
+    c, admin_of = call("GET", "/communities/admin-of", ot)
+    assert c == 200 and admin_of, admin_of
+    cid = admin_of[0]["id"]
+    mid = mu["id"]
+    c, created = call(
+        "POST",
+        "/projects",
+        ot,
+        {
+            "community_id": cid,
+            "title": title,
+            "summary": "cloud extra flow",
+            "quota": 3,
+            "description": "auto created for cloud_extra_flows",
+            "mentor_id": mid,
+        },
+    )
+    assert c in (200, 201), created
+    pid = created["id"]
+    c, pub = call("POST", f"/projects/{pid}/publish", mt)
+    if c != 200:
+        c, pub = call("POST", f"/projects/{pid}/publish", ot)
+    assert c == 200 and pub.get("status") == "published", pub
+    pub["mentor_email"] = mentor_email
+    return pub
+
+
 def main():
     suffix = uuid.uuid4().hex[:8]
     # --- mentor reject ---
@@ -93,9 +125,7 @@ def main():
     st = reg["access_token"]
     rpdf = upload_pdf(st, "r.pdf")
     dpdf = upload_pdf(st, "d.pdf")
-    # use docs project + docs mentor
-    c, pubs = call("GET", "/projects?status=published")
-    proj = next(p for p in pubs if p.get("mentor_email") == "docs.mentor@demo.hust.edu.cn")
+    proj = ensure_project("docs.admin@demo.hust.edu.cn", "docs.mentor@demo.hust.edu.cn", f"E2E拒测课题-{suffix}")
     mt, _ = login("docs.mentor@demo.hust.edu.cn")
     ot, _ = login("docs.admin@demo.hust.edu.cn")
     c, app = call("POST", f"/projects/{proj['id']}/applications", st, {"statement": "reject path", "extra_fields": {"resume_pdf": rpdf, "design_pdf": dpdf}, "submit": True})
@@ -111,7 +141,7 @@ def main():
     st2 = reg2["access_token"]
     rpdf2 = upload_pdf(st2, "r.pdf")
     dpdf2 = upload_pdf(st2, "d.pdf")
-    proj2 = next(p for p in pubs if p.get("mentor_email") == "devtools.mentor@demo.hust.edu.cn")
+    proj2 = ensure_project("devtools.admin@demo.hust.edu.cn", "devtools.mentor@demo.hust.edu.cn", f"E2E撤测课题-{suffix}")
     mt2, _ = login("devtools.mentor@demo.hust.edu.cn")
     c, appw = call("POST", f"/projects/{proj2['id']}/applications", st2, {"statement": "withdraw path", "extra_fields": {"resume_pdf": rpdf2, "design_pdf": dpdf2}, "submit": True})
     ok("withdraw-path apply", c == 201, appw.get("status"))
@@ -126,7 +156,7 @@ def main():
     st3 = reg3["access_token"]
     rpdf3 = upload_pdf(st3, "r.pdf")
     dpdf3 = upload_pdf(st3, "d.pdf")
-    proj3 = next(p for p in pubs if p.get("mentor_email") == "ai-lab.mentor@demo.hust.edu.cn")
+    proj3 = ensure_project("ai-lab.admin@demo.hust.edu.cn", "ai-lab.mentor@demo.hust.edu.cn", f"E2E组拒课题-{suffix}")
     mt3, _ = login("ai-lab.mentor@demo.hust.edu.cn")
     ot3, _ = login("ai-lab.admin@demo.hust.edu.cn")
     c, app3 = call("POST", f"/projects/{proj3['id']}/applications", st3, {"statement": "org reject", "extra_fields": {"resume_pdf": rpdf3, "design_pdf": dpdf3}, "submit": True})

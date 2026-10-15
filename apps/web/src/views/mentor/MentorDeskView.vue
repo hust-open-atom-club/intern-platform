@@ -54,13 +54,19 @@ const selectedId = computed(() => Number(route.params.id) || 0)
 
 const project = computed(() => projects.value.find((item) => item.id === pickedProjectId.value) || null)
 
-const talkTargets = computed(() => {
-  const ids = [...new Set(projects.value.map((item) => item.community_id))]
-  return ids.map((id) => ({
-    id,
-    name: communities.value.find((item) => item.id === id)?.name || `社区 #${id}`,
-  }))
-})
+/** 以邀请码绑定的社区为准（未分配任务时也要能看到所属社区） */
+const myCommunities = computed(() => communities.value)
+
+const talkTargets = computed(() =>
+  myCommunities.value.map((item) => ({
+    id: item.id,
+    name: item.name,
+  })),
+)
+
+const communityNames = computed(() =>
+  myCommunities.value.map((item) => item.name).filter(Boolean).join('、'),
+)
 
 const talkName = computed(() => talkTargets.value.find((item) => item.id === talkCommunityId.value)?.name || '社区')
 
@@ -191,6 +197,10 @@ function openDoc(kind: DocTab) {
   previewOpen.value = true
 }
 
+const HISTORY_PAGE = 8
+const progressHistoryShown = ref(HISTORY_PAGE)
+const acceptanceHistoryShown = ref(HISTORY_PAGE)
+
 const progressItems = computed(() =>
   logs.value
     .filter((m) => m.kind === 'progress')
@@ -204,6 +214,14 @@ const acceptanceItems = computed(() =>
     .slice()
     .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''))),
 )
+
+const latestProgress = computed(() => progressItems.value[0] || null)
+const olderProgress = computed(() => progressItems.value.slice(1))
+const visibleOlderProgress = computed(() => olderProgress.value.slice(0, progressHistoryShown.value))
+
+const latestAcceptance = computed(() => acceptanceItems.value[0] || null)
+const olderAcceptance = computed(() => acceptanceItems.value.slice(1))
+const visibleOlderAcceptance = computed(() => olderAcceptance.value.slice(0, acceptanceHistoryShown.value))
 
 function filledLink(url?: string | null) {
   const value = (url || '').trim()
@@ -279,26 +297,31 @@ async function loadDetail(id: number) {
   showHistory.value = false
   comment.value = ''
   advice.value = ''
+  progressHistoryShown.value = HISTORY_PAGE
+  acceptanceHistoryShown.value = HISTORY_PAGE
 }
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    const { data: owned } = await api.get<ProjectOut[]>('/projects', { params: { owned: true } })
-    projects.value = owned
-    const { data: catalog } = await api.get<CommunityOut[]>('/communities')
-    communities.value = catalog
-    const { data } = await api.get<ApplicationOut[]>('/mentor/inbox')
-    rows.value = data
-    const open = data.find((row) => row.id === selectedId.value)
+    const [owned, mine, inbox] = await Promise.all([
+      api.get<ProjectOut[]>('/projects', { params: { owned: true } }),
+      api.get<CommunityOut[]>('/communities/mine'),
+      api.get<ApplicationOut[]>('/mentor/inbox'),
+    ])
+    projects.value = owned.data
+    communities.value = mine.data
+    rows.value = inbox.data
+    if (!talkCommunityId.value && mine.data[0]) talkCommunityId.value = mine.data[0].id
+    const open = inbox.data.find((row) => row.id === selectedId.value)
     const live = projectOptions.value
     const openLive = !!(open && live.some((item) => item.id === open.project_id))
     if (openLive && open) pickedProjectId.value = open.project_id
     else if (!live.some((item) => item.id === pickedProjectId.value)) {
       pickedProjectId.value = live[0]?.id || 0
     }
-    if (selectedId.value && data.some((a) => a.id === selectedId.value)) {
+    if (selectedId.value && inbox.data.some((a) => a.id === selectedId.value)) {
       await loadDetail(selectedId.value)
     } else {
       detail.value = null
@@ -440,11 +463,15 @@ onMounted(load)
       <div class="top-head">
         <div>
           <h1>导师工作台</h1>
+          <p v-if="communityNames" class="org-line">所属社区：{{ communityNames }}</p>
+          <p v-else class="org-line warn">尚未绑定社区。请向社区管理员索取邀请码，在「导师注册」页加入。</p>
           <div class="task-line">
             <label class="task-field">
               <span>任务</span>
               <select class="task-select" :value="pickedProjectId || ''" @change="onPickProject">
-                <option v-if="!projectOptions.length" value="">没有正在招生的任务</option>
+                <option v-if="!projectOptions.length" value="">
+                  {{ communityNames ? '社区尚未给你分配任务' : '请先加入社区' }}
+                </option>
                 <option v-for="item in projectOptions" :key="item.id" :value="item.id">
                   {{ item.title }}
                 </option>
@@ -458,6 +485,9 @@ onMounted(load)
               已入选 {{ project.seats_taken || 0 }} / 名额 {{ project.quota || 0 }}
               <template v-if="slotsLeft <= 0"> · 设计审核已关闭</template>
               <template v-else-if="pendingDesigns > 1"> · 先把材料对照完，再通过最合适的人</template>
+            </p>
+            <p v-else-if="communityNames && !projectOptions.length" class="hint-line">
+              任务由社区管理员在「组织工作台 → 项目」创建，并指定你为负责导师后，才会出现在这里。
             </p>
           </div>
         </div>
@@ -503,7 +533,7 @@ onMounted(load)
           <strong>{{ item.name }}</strong>
           <span>社区管理员</span>
         </button>
-        <p v-if="!talkTargets.length" class="empty">还没有可对接的社区。</p>
+        <p v-if="!talkTargets.length" class="empty">尚未绑定社区。请用邀请码注册/加入后再来对接。</p>
       </aside>
       <section class="col talk">
         <header>
@@ -553,7 +583,16 @@ onMounted(load)
           <span>{{ jobLabel(a) }}</span>
           <small>{{ formatDateTime(a.latest_update_at || a.updated_at || a.created_at) }}</small>
         </div>
-        <p v-if="!pageRows.length" class="muted empty">这个任务里没有符合条件的同学。</p>
+        <p v-if="!pageRows.length" class="muted empty">
+          <template v-if="!projectOptions.length">
+            {{
+              communityNames
+                ? '还没有分配给你的任务。请社区管理员在组织工作台创建项目并指定你为导师。'
+                : '尚未绑定社区，请先用邀请码加入。'
+            }}
+          </template>
+          <template v-else>这个任务里没有符合条件的同学。</template>
+        </p>
         <div v-if="matched.length > pageSize" class="pager">
           <button type="button" :disabled="page <= 1" @click="page = page - 1">上一页</button>
           <span>{{ page }} / {{ pageCount }} · {{ matched.length }} 人</span>
@@ -603,13 +642,40 @@ onMounted(load)
           <div v-else-if="workTab === 'progress'" class="pane scroll">
             <p class="hint">进展只是让你知道学生做到哪一步。下载看过之后，在下面写建议。这里不能结项，也不能退回验收。</p>
             <p v-if="!progressItems.length" class="muted">这位同学还没有更新进展。</p>
-            <article v-for="m in progressItems" :key="m.id" class="card">
-              <small>更新进展 · {{ formatDateTime(m.created_at) }}</small>
-              <p>{{ m.body || '没有写说明' }}</p>
-              <p v-if="filledLink(m.design_doc_url)" class="as-text">设计文档：{{ filledLink(m.design_doc_url) }}</p>
-              <p v-if="filledLink(m.code_url)" class="as-text">代码链接：{{ filledLink(m.code_url) }}</p>
-              <a v-if="m.attachment_url" :href="withFileAuth(m.attachment_url)" :download="m.attachment_name || '交付件.zip'">下载 {{ m.attachment_name || '交付件' }}</a>
-            </article>
+            <template v-else>
+              <p class="count-line">共 {{ progressItems.length }} 次进展 · 默认只展开最新一次</p>
+              <article v-if="latestProgress" :key="latestProgress.id" class="card">
+                <small>最新进展 · {{ formatDateTime(latestProgress.created_at) }}</small>
+                <p>{{ latestProgress.body || '没有写说明' }}</p>
+                <p v-if="filledLink(latestProgress.design_doc_url)" class="as-text">设计文档：{{ filledLink(latestProgress.design_doc_url) }}</p>
+                <p v-if="filledLink(latestProgress.code_url)" class="as-text">代码链接：{{ filledLink(latestProgress.code_url) }}</p>
+                <a v-if="latestProgress.attachment_url" :href="withFileAuth(latestProgress.attachment_url)" :download="latestProgress.attachment_name || '交付件.zip'">下载 {{ latestProgress.attachment_name || '交付件' }}</a>
+              </article>
+              <div v-if="olderProgress.length" class="history">
+                <b>更早的进展（{{ olderProgress.length }}）</b>
+                <div
+                  v-for="m in visibleOlderProgress"
+                  :key="m.id"
+                  class="hist-row"
+                >
+                  <span>{{ formatDateTime(m.created_at) }}</span>
+                  <span class="hist-body">{{ m.body || '没有写说明' }}</span>
+                  <a
+                    v-if="m.attachment_url"
+                    :href="withFileAuth(m.attachment_url)"
+                    :download="m.attachment_name || '交付件.zip'"
+                  >下载</a>
+                </div>
+                <button
+                  v-if="visibleOlderProgress.length < olderProgress.length"
+                  type="button"
+                  class="more"
+                  @click="progressHistoryShown += HISTORY_PAGE"
+                >
+                  再显示 {{ Math.min(HISTORY_PAGE, olderProgress.length - visibleOlderProgress.length) }} 条
+                </button>
+              </div>
+            </template>
             <label>
               给这次进展的建议
               <textarea v-model="advice" rows="3" placeholder="看完材料后写给同学。这只是建议，不会变成未通过。" />
@@ -620,13 +686,40 @@ onMounted(load)
           <div v-else class="pane scroll">
             <p class="hint">这里是结项。只看学生交来的验收，和上面的进展不是同一件事。</p>
             <p v-if="!acceptanceItems.length" class="muted">还没有提交验收。</p>
-            <article v-for="m in acceptanceItems" :key="m.id" class="card final">
-              <small>提交验收 · {{ formatDateTime(m.created_at) }}</small>
-              <p>{{ m.body || '没有写说明' }}</p>
-              <p v-if="filledLink(m.design_doc_url)" class="as-text">设计文档：{{ filledLink(m.design_doc_url) }}</p>
-              <p v-if="filledLink(m.code_url)" class="as-text">代码链接：{{ filledLink(m.code_url) }}</p>
-              <a v-if="m.attachment_url" :href="withFileAuth(m.attachment_url)" :download="m.attachment_name || '交付件.zip'">下载 {{ m.attachment_name || '交付件' }}</a>
-            </article>
+            <template v-else>
+              <p class="count-line">共 {{ acceptanceItems.length }} 次验收 · 默认只展开最新一次</p>
+              <article v-if="latestAcceptance" :key="latestAcceptance.id" class="card final">
+                <small>最新验收 · {{ formatDateTime(latestAcceptance.created_at) }}</small>
+                <p>{{ latestAcceptance.body || '没有写说明' }}</p>
+                <p v-if="filledLink(latestAcceptance.design_doc_url)" class="as-text">设计文档：{{ filledLink(latestAcceptance.design_doc_url) }}</p>
+                <p v-if="filledLink(latestAcceptance.code_url)" class="as-text">代码链接：{{ filledLink(latestAcceptance.code_url) }}</p>
+                <a v-if="latestAcceptance.attachment_url" :href="withFileAuth(latestAcceptance.attachment_url)" :download="latestAcceptance.attachment_name || '交付件.zip'">下载 {{ latestAcceptance.attachment_name || '交付件' }}</a>
+              </article>
+              <div v-if="olderAcceptance.length" class="history">
+                <b>更早的验收（{{ olderAcceptance.length }}）</b>
+                <div
+                  v-for="m in visibleOlderAcceptance"
+                  :key="m.id"
+                  class="hist-row"
+                >
+                  <span>{{ formatDateTime(m.created_at) }}</span>
+                  <span class="hist-body">{{ m.body || '没有写说明' }}</span>
+                  <a
+                    v-if="m.attachment_url"
+                    :href="withFileAuth(m.attachment_url)"
+                    :download="m.attachment_name || '交付件.zip'"
+                  >下载</a>
+                </div>
+                <button
+                  v-if="visibleOlderAcceptance.length < olderAcceptance.length"
+                  type="button"
+                  class="more"
+                  @click="acceptanceHistoryShown += HISTORY_PAGE"
+                >
+                  再显示 {{ Math.min(HISTORY_PAGE, olderAcceptance.length - visibleOlderAcceptance.length) }} 条
+                </button>
+              </div>
+            </template>
             <div v-if="mentorNotes.length" class="notes">
               <b>以往退回时写过的话</b>
               <article v-for="n in mentorNotes.filter((item) => item.tag === '打回')" :key="n.id">
@@ -644,7 +737,7 @@ onMounted(load)
                 <button class="btn danger" type="button" :disabled="busy" @click="ask('reject')">退回</button>
               </div>
             </div>
-            <p v-else-if="current.status === 'community_final_review'" class="muted">验收已经通过。学生可以向本社区申请奖励，材料只交给社区管理员。结项完成后，名单直接进入组委会，不再走社区对接。</p>
+            <p v-else-if="current.status === 'community_final_review'" class="muted">验收已经通过。学生向本社区申请实习，社区通过后组委会自动计入结项名单。</p>
             <p v-else-if="current.status === 'committee_final_review'" class="muted">你已通过结项，材料在组委会审核。</p>
             <p v-else-if="acceptanceItems.length" class="muted">现在不是结项审核阶段，只能查看已交的验收材料。</p>
           </div>
@@ -674,6 +767,13 @@ onMounted(load)
   gap: 16px;
 }
 .top h1 { margin: 0; font-size: 1.05rem; font-weight: 650; color: #8c8c8c; }
+.org-line {
+  margin: 6px 0 0;
+  font-size: 0.86rem;
+  color: #595959;
+}
+.org-line.warn { color: #ad6800; }
+.hint-line { color: #8c8c8c !important; max-width: 36rem; }
 .task-line {
   display: flex;
   align-items: flex-end;
@@ -715,7 +815,9 @@ onMounted(load)
 }
 .body.liaison .people {
   padding: 12px;
+  min-height: 0;
   overflow: auto;
+  overflow-y: auto;
   background: #f7f9fc;
 }
 .body.liaison .people h2 { margin: 0 0 10px; font-size: 0.95rem; }
@@ -737,7 +839,13 @@ onMounted(load)
   box-shadow: inset 3px 0 0 #1677ff;
 }
 .body.liaison .people span { display: block; color: #64748b; font-size: 0.8rem; margin-top: 2px; }
-.body.liaison .talk { display: flex; flex-direction: column; padding: 0; }
+.body.liaison .talk {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  min-height: 0;
+  overflow: hidden;
+}
 .body.liaison .talk header {
   display: flex;
   justify-content: space-between;
@@ -760,7 +868,7 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 160px;
+  min-height: 0;
 }
 .body.liaison .empty { margin: 0; color: #64748b; font-size: 0.88rem; }
 .body.liaison .talk :deep(.composer) { padding: 0 12px 12px; }
@@ -897,6 +1005,52 @@ onMounted(load)
 .card .as-text { color: #1f2937; word-break: break-word; }
 .card a, .pane > .btn { color: #1677ff; }
 .card a { margin-right: 12px; }
+.count-line { margin: 0; font-size: 0.82rem; color: #64748b; }
+.history {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: min(360px, 42vh);
+  overflow: auto;
+}
+.history > b {
+  font-size: 0.82rem;
+  color: #475569;
+  margin-bottom: 6px;
+}
+.hist-row {
+  display: grid;
+  grid-template-columns: 9.5rem 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px solid #f1f5f9;
+  font-size: 0.84rem;
+}
+.hist-row > span:first-child { color: #64748b; white-space: nowrap; }
+.hist-body {
+  color: #334155;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hist-row a { color: #1677ff; white-space: nowrap; }
+.history .more {
+  margin-top: 8px;
+  align-self: flex-start;
+  border: 1px solid #d9d9d9;
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  color: #1677ff;
+}
 .decide { margin-top: 8px; padding: 12px 14px 4px; border-top: 1px solid #eef2f6; }
 .decide textarea, .pane textarea { width: 100%; box-sizing: border-box; margin-top: 6px; }
 .pane > .btn.pass { align-self: flex-start; background: #1677ff; color: #fff; border: 0; border-radius: 8px; padding: 8px 14px; }

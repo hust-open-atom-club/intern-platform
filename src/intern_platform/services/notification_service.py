@@ -120,18 +120,18 @@ class NotificationService:
 
         status_zh = {
             "mentor_review": "导师审核中",
-            "community_review": "社区审核中",
-            "committee_review": "组委会审核中",
+            "community_review": "名额已预留",
+            "committee_review": "名额已预留",
             "selected": "已中选",
             "rejected": "未通过",
             "withdrawn": "已放弃/取消接取",
             "in_progress": "开发中",
             "final_submitted": "已提交验收",
             "mentor_final_review": "导师验收中",
-            "community_final_review": "导师已通过验收，待社区报送组委会",
+            "community_final_review": "导师已通过验收，可向社区申请实习",
             "committee_final_review": "组委会已接收结项",
             "final_rejected": "验收失败",
-            "completed": "已结项（社区报送后组委会已自动接收）",
+            "completed": "已结项（社区通过实习申请后组委会已自动接收）",
         }.get(to_status, to_status)
         title = f"审核有进展：{project_title}"
         body = f"项目「{project_title}」申请进度更新为：{status_zh}。"

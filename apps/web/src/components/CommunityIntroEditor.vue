@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import api from '@/api/client'
+import api, { withFileAuth } from '@/api/client'
 import type { CommunityIntroBody, IntroBlock } from '@/api/types'
+
+function imgSrc(url?: string | null) {
+  return withFileAuth(url) || url || ''
+}
 
 const props = withDefaults(
   defineProps<{
@@ -310,7 +314,7 @@ const kindLabel: Record<string, string> = {
           @input="onInputText(i, $event)"
         />
         <div v-else-if="b.type === 'image'" class="img-block">
-          <img v-if="b.url" :src="b.url" alt="" />
+          <img v-if="b.url" :src="imgSrc(b.url)" alt="" />
           <div class="img-acts">
             <button class="btn sm" type="button" :disabled="busy" @click="replaceImage(i)">
               {{ busy ? '上传中…' : b.url ? '换图' : '上传' }}

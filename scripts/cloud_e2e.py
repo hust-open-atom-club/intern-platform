@@ -167,34 +167,70 @@ def find_org_for_community(community_id: int) -> str | None:
     return None
 
 
+def ensure_kernel_project() -> tuple[dict, str, str]:
+    """组织为演示导师创建并发布课题（种子不再预置演示课题）。"""
+    mentor_email = "mentor@demo.hust.edu.cn"
+    org_email = "admin@demo.hust.edu.cn"
+    org_tok, _ = login(org_email)
+    mentor_tok, mentor_user = login(mentor_email)
+    if not org_tok or not mentor_tok:
+        raise RuntimeError("demo mentor/org login failed")
+    code, admin_of = call("GET", "/communities/admin-of", org_tok)
+    if code != 200 or not admin_of:
+        raise RuntimeError(f"admin-of failed: {admin_of}")
+    cid = admin_of[0]["id"]
+    mid = mentor_user["id"]
+    suffix = uuid.uuid4().hex[:6]
+    code, created = call(
+        "POST",
+        "/projects",
+        org_tok,
+        {
+            "community_id": cid,
+            "title": f"E2E联调课题-{suffix}",
+            "summary": "cloud e2e auto",
+            "quota": 2,
+            "description": "temporary project for cloud_e2e",
+            "mentor_id": mid,
+        },
+    )
+    if code not in (200, 201):
+        raise RuntimeError(f"create project failed: {created}")
+    pid = created["id"]
+    code, pub = call("POST", f"/projects/{pid}/publish", mentor_tok)
+    if code != 200:
+        code, pub = call("POST", f"/projects/{pid}/publish", org_tok)
+    if code != 200:
+        raise RuntimeError(f"publish failed: {pub}")
+    pub["mentor_email"] = mentor_email
+    return pub, mentor_email, org_email
+
+
 def find_project_and_roles() -> tuple[dict, str, str]:
-    """Return (project, mentor_email, org_email) using project.mentor_email."""
+    """Return (project, mentor_email, org_email); create one if none published."""
     code, projects = call("GET", "/projects?status=published")
-    assert code == 200 and projects, projects
-    candidates = []
-    for p in projects:
-        taken = int(p.get("seats_taken") or 0)
-        quota = int(p.get("quota") or 0)
-        avail = p.get("seats_available")
-        if avail is None:
-            open_seat = quota == 0 or taken < quota
-        else:
-            open_seat = int(avail) > 0
-        if open_seat and p.get("mentor_email"):
-            candidates.append(p)
-    if not candidates:
-        candidates = [p for p in projects if p.get("mentor_email")]
-    # Prefer non-demo-kernel SpMV last
-    candidates.sort(key=lambda p: (0 if "SpMV" not in (p.get("title") or "") else 1, p.get("id") or 0))
-    for p in candidates:
-        mentor = p.get("mentor_email")
-        org = find_org_for_community(int(p["community_id"]))
-        if mentor and org:
-            # verify mentor can login
-            tok, _ = login(mentor)
-            if tok:
-                return p, mentor, org
-    raise RuntimeError("no usable project/mentor/org")
+    if code == 200 and isinstance(projects, list) and projects:
+        candidates = []
+        for p in projects:
+            taken = int(p.get("seats_taken") or 0)
+            quota = int(p.get("quota") or 0)
+            avail = p.get("seats_available")
+            if avail is None:
+                open_seat = quota == 0 or taken < quota
+            else:
+                open_seat = int(avail) > 0
+            if open_seat and p.get("mentor_email"):
+                candidates.append(p)
+        if not candidates:
+            candidates = [p for p in projects if p.get("mentor_email")]
+        for p in candidates:
+            mentor = p.get("mentor_email")
+            org = find_org_for_community(int(p["community_id"]))
+            if mentor and org:
+                tok, _ = login(mentor)
+                if tok:
+                    return p, mentor, org
+    return ensure_kernel_project()
 
 
 def main() -> int:
@@ -230,7 +266,7 @@ def main() -> int:
         ok(f"public {ep}", code == 200, type(data).__name__)
 
     code, pubs = call("GET", "/projects?status=published")
-    ok("published projects", code == 200 and isinstance(pubs, list) and len(pubs) > 0, f"n={len(pubs) if isinstance(pubs, list) else pubs}")
+    ok("published projects", code == 200 and isinstance(pubs, list), f"n={len(pubs) if isinstance(pubs, list) else pubs}")
     code, communities = call("GET", "/communities?status=approved")
     ok("approved communities", code == 200 and isinstance(communities, list) and len(communities) > 0, f"n={len(communities) if isinstance(communities, list) else communities}")
     code, pend = call("GET", "/communities?status=pending")
@@ -355,17 +391,11 @@ def main() -> int:
     code, _ = call("POST", f"/applications/{app_id}/transitions", student, {"action": "approve_committee"})
     ok("illegal transition blocked", code in (403, 409), code)
 
-    # mentor approve
+    # mentor approve -> 直接中选（组织端不再单独选拔审核）
     code, r = call("POST", f"/applications/{app_id}/reviews", mentor_tok, {"decision": "approve", "comment": "mentor ok"})
-    ok("mentor approve", code == 200 and r.get("to_status") == "community_review", r)
-    # org inbox
-    code, oinbox = call("GET", "/applications/inbox", org_tok)
-    sel = [a for a in oinbox if isinstance(oinbox, list) and a.get("id") == app_id]
-    ok("org selection inbox", code == 200 and sel and sel[0].get("status") == "community_review", sel[0].get("status") if sel else oinbox)
-
-    # community approve -> auto selected
-    code, r = call("POST", f"/applications/{app_id}/reviews", org_tok, {"decision": "approve", "comment": "org ok"})
-    ok("community approve -> selected", code == 200 and r.get("to_status") == "selected", r)
+    ok("mentor approve -> selected", code == 200 and r.get("to_status") == "selected", r)
+    code, app_row = call("GET", f"/applications/{app_id}", student)
+    ok("application selected", code == 200 and app_row.get("status") == "selected", app_row.get("status") if isinstance(app_row, dict) else app_row)
 
     # notifications for student
     code, notes = call("GET", "/notifications", student)
@@ -410,24 +440,32 @@ def main() -> int:
 
     code, oinbox2 = call("GET", "/applications/inbox", org_tok)
     finq = [a for a in oinbox2 if isinstance(oinbox2, list) and a.get("id") == app_id]
-    ok("org final queue", bool(finq) and finq[0].get("status") == "community_final_review", finq[0].get("status") if finq else None)
+    ok("org after mentor final", bool(finq) and finq[0].get("status") == "community_final_review", finq[0].get("status") if finq else None)
 
-    # community-final：附件须为组织本人上传
-    code_oz, up_org_z = _upload_raw(
-        org_tok, "zip", "org-final.zip", zbytes, "application/zip", f"b{uuid.uuid4().hex}"
+    # 学生奖励申请 → 社区通过 → 自动结项
+    code_sz, up_stu_z = _upload_raw(
+        student, "zip", "reward.zip", zbytes, "application/zip", f"b{uuid.uuid4().hex}"
     )
-    ok("org upload final zip", code_oz == 200 and "url" in (up_org_z or {}), up_org_z if code_oz != 200 else up_org_z.get("url"))
+    ok("student upload reward zip", code_sz == 200 and "url" in (up_stu_z or {}), up_stu_z if code_sz != 200 else up_stu_z.get("url"))
     code, r = call(
         "POST",
-        f"/applications/{app_id}/community-final",
-        org_tok,
+        f"/applications/{app_id}/messages",
+        student,
         {
-            "note": "社区已核对，报送组委会",
-            "attachment_url": (up_org_z or {}).get("url"),
-            "attachment_name": "org-final.zip",
+            "body": "说明：云端 e2e 奖励\n手机：13900000000",
+            "kind": "reward",
+            "attachment_url": (up_stu_z or {}).get("url"),
+            "attachment_name": "reward.zip",
         },
     )
-    ok("community-final -> completed", code == 200 and r.get("to_status") == "completed", r)
+    ok("student reward apply", code == 200, r if code != 200 else "ok")
+    code, r = call(
+        "POST",
+        f"/applications/{app_id}/reward-decision",
+        org_tok,
+        {"decision": "approved"},
+    )
+    ok("org reward approve -> completed", code == 200, r)
 
     code, app_done = call("GET", f"/applications/{app_id}", student)
     ok("app completed", code == 200 and app_done.get("status") == "completed", app_done.get("status") if isinstance(app_done, dict) else app_done)

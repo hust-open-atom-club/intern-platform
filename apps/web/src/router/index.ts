@@ -75,21 +75,19 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
-      path: '/student/applications/:id/reward',
-      name: 'student-reward',
+      path: '/student/applications/:id/internship',
+      name: 'student-internship',
       component: () => import('@/views/student/RewardApplyView.vue'),
       meta: { requiresAuth: true },
+    },
+    {
+      path: '/student/applications/:id/reward',
+      redirect: (to) => `/student/applications/${to.params.id}/internship`,
     },
     {
       path: '/org',
       name: 'org-portal',
       component: () => import('@/views/org/OrgPortalView.vue'),
-      meta: { requiresAuth: true },
-    },
-    {
-      path: '/org/final/:id',
-      name: 'org-final-submit',
-      component: () => import('@/views/org/CommunityFinalSubmitView.vue'),
       meta: { requiresAuth: true },
     },
     {
@@ -154,10 +152,35 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
   auth.alignScope(to.path)
   if (auth.token && !auth.user) {
-    const who = await auth.fetchMe()
-    if (who === 'disabled' && to.name !== 'login' && to.name !== 'committee-login') {
-      const role = to.path.startsWith('/mentor') ? 'mentor' : to.path.startsWith('/org') ? 'org' : 'student'
-      return { name: 'login', query: { role } }
+    // 登录/注册页不要卡住等 /auth/me（弱网或过期 token 会感觉「点了很久才出来」）
+    if (to.meta.guest) {
+      void auth.fetchMe().then((who) => {
+        if (who === 'disabled') return
+        if (!auth.isLoggedIn) return
+        if (to.meta.committeePortal && auth.hasRole('committee')) {
+          router.replace('/committee')
+          return
+        }
+        if (auth.hasRole('mentor') && !auth.hasRole('community_admin')) {
+          router.replace('/mentor')
+          return
+        }
+        if (auth.hasRole('community_admin')) {
+          router.replace('/org')
+          return
+        }
+        if (!to.meta.committeePortal) router.replace({ name: 'home' })
+      })
+    } else {
+      const who = await auth.fetchMe()
+      if (who === 'disabled' && to.name !== 'login' && to.name !== 'committee-login') {
+        const role = to.path.startsWith('/mentor')
+          ? 'mentor'
+          : to.path.startsWith('/org')
+            ? 'org'
+            : 'student'
+        return { name: 'login', query: { role } }
+      }
     }
   }
   if (to.meta.requiresAuth && !auth.isLoggedIn) {

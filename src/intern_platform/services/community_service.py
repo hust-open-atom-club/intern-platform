@@ -8,7 +8,7 @@ import string
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from intern_platform.dependencies.auth import AuthUser, hash_password
+from intern_platform.dependencies.auth import AuthUser, hash_password, verify_password
 from intern_platform.dependencies.ledger import LedgerRequestContext
 from intern_platform.models.community import Community
 from intern_platform.models.community_extension import CommunityExtension
@@ -16,6 +16,7 @@ from intern_platform.models.role import Role, UserRole
 from intern_platform.repositories.audit_log import AuditLogRepository
 from intern_platform.repositories.workflow_event import WorkflowEventRepository
 from intern_platform.services.community_codec import dumps_intro_body, dumps_tags
+from intern_platform.services.password_vault import seal_password, unseal_password
 from intern_platform.schemas.business import (
     CommunityCreate,
     CommunityJoinOut,
@@ -31,6 +32,12 @@ def _gen_invite_code(_name: str = "") -> str:
     left = "".join(secrets.choice(alphabet) for _ in range(4))
     right = "".join(secrets.choice(alphabet) for _ in range(4))
     return f"{left}-{right}"
+
+
+def _gen_initial_password() -> str:
+    """避免 I/l/1/O/0，降低抄密码时认错字符。"""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(14))
 
 
 class CommunityService:
@@ -248,10 +255,11 @@ class CommunityService:
             self._assert_role_compatible(user.id, "community_admin")
         initial_password: str | None = None
         if user is None:
-            initial_password = secrets.token_urlsafe(12)
+            initial_password = _gen_initial_password()
             user = User(
                 email=email_n,
                 password_hash=hash_password(initial_password),
+                password_enc=seal_password(initial_password),
                 display_name=display_name.strip() or email_n.split("@")[0],
                 school="华中科技大学",
                 auth_provider="local",
@@ -280,6 +288,114 @@ class CommunityService:
             )
         community.applicant_user_id = user.id
         return initial_password
+
+    def _community_admin_user(self, community_id: int):
+        community = self.session.get(Community, community_id)
+        if community is None:
+            raise LookupError("组织不存在")
+        admin_role = self.session.scalar(select(Role).where(Role.code == "community_admin"))
+        if admin_role is None:
+            raise LookupError("系统未配置 community_admin 角色")
+        from intern_platform.models.user import User
+
+        uid = self.session.scalar(
+            select(UserRole.user_id).where(
+                UserRole.role_id == admin_role.id,
+                UserRole.community_id == community_id,
+            )
+        )
+        if uid is None:
+            raise LookupError("这个组织没有管理员账号")
+        user = self.session.get(User, uid)
+        if user is None:
+            raise LookupError("这个组织没有管理员账号")
+        return community, user
+
+    def view_community_admin_password(self, auth: AuthUser, community_id: int) -> dict[str, str | None]:
+        """组委会查看组织管理员当前密码（只读，不重置）。"""
+        if not auth.has_role("committee"):
+            raise PermissionError("仅组委会可查看组织密码")
+        community, user = self._community_admin_user(community_id)
+        password = unseal_password(getattr(user, "password_enc", None))
+        # 历史种子账号常见初始密码：能校验则补存档，之后可直接查看
+        if not password and verify_password("Demo@123456", user.password_hash):
+            password = "Demo@123456"
+            user.password_enc = seal_password(password)
+            self.session.add(user)
+        self.audits.create(
+            actor_id=auth.id,
+            actor_role="committee",
+            action="community.admin_password_view",
+            resource_type="community",
+            resource_id=community_id,
+            after={"admin_email": user.email, "admin_user_id": user.id, "available": bool(password)},
+            outcome="SUCCESS",
+        )
+        self.session.commit()
+        return {
+            "email": user.email,
+            "password": password,
+            "community_name": community.name,
+        }
+
+    def archive_community_admin_password(
+        self, auth: AuthUser, community_id: int, plain: str
+    ) -> dict[str, str | None]:
+        """组委会录入与当前登录一致的密码，写入可查看存档（不改哈希）。"""
+        if not auth.has_role("committee"):
+            raise PermissionError("仅组委会可存档组织密码")
+        plain = (plain or "").strip()
+        if len(plain) < 6:
+            raise ValueError("密码至少 6 位")
+        community, user = self._community_admin_user(community_id)
+        if not verify_password(plain, user.password_hash):
+            raise PermissionError("与当前登录密码不一致，无法存档")
+        user.password_enc = seal_password(plain)
+        self.session.add(user)
+        self.audits.create(
+            actor_id=auth.id,
+            actor_role="committee",
+            action="community.admin_password_archive",
+            resource_type="community",
+            resource_id=community_id,
+            after={"admin_email": user.email, "admin_user_id": user.id},
+            outcome="SUCCESS",
+        )
+        self.session.commit()
+        return {
+            "email": user.email,
+            "password": plain,
+            "community_name": community.name,
+        }
+
+    def reissue_community_admin_password(
+        self, auth: AuthUser, community_id: int
+    ) -> dict[str, str | None]:
+        """仅未存档账号：补发新密码并写入存档，解决历史丢失密码。"""
+        if not auth.has_role("committee"):
+            raise PermissionError("仅组委会可补发组织密码")
+        community, user = self._community_admin_user(community_id)
+        if unseal_password(getattr(user, "password_enc", None)):
+            raise PermissionError("该账号已可查看密码；日常改密请由社区自己完成")
+        password = _gen_initial_password()
+        user.password_hash = hash_password(password)
+        user.password_enc = seal_password(password)
+        self.session.add(user)
+        self.audits.create(
+            actor_id=auth.id,
+            actor_role="committee",
+            action="community.admin_password_reissue",
+            resource_type="community",
+            resource_id=community_id,
+            after={"admin_email": user.email, "admin_user_id": user.id},
+            outcome="SUCCESS",
+        )
+        self.session.commit()
+        return {
+            "email": user.email,
+            "password": password,
+            "community_name": community.name,
+        }
 
     def update_profile(
         self,

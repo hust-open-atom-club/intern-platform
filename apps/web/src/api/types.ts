@@ -14,6 +14,7 @@ export interface UserOut {
   gitee_id?: string | null
   gitlink_id?: string | null
   oauth_avatars?: Record<string, string>
+  avatar_url?: string | null
   member_no?: string | null
   bio?: string | null
   phone?: string | null

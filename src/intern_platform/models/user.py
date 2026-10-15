@@ -15,6 +15,8 @@ class User(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Fernet 密文：仅组织账号写入，供组委会查看；登录仍用 password_hash
+    password_enc: Mapped[str | None] = mapped_column(Text)
     display_name: Mapped[str] = mapped_column(String(128), nullable=False)
     school: Mapped[str | None] = mapped_column(String(128))
     github_id: Mapped[str | None] = mapped_column(String(128))
@@ -24,6 +26,7 @@ class User(TimestampMixin, Base):
     gitlink_id: Mapped[str | None] = mapped_column(String(128))
     # JSON: {"gitcode":"https://...avatar...","github":"..."}
     oauth_avatars: Mapped[str | None] = mapped_column(Text)
+    avatar_url: Mapped[str | None] = mapped_column(String(512))
     member_no: Mapped[str | None] = mapped_column(String(64))
     bio: Mapped[str | None] = mapped_column(Text)
     phone: Mapped[str | None] = mapped_column(String(32))

@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import api from '@/api/client'
+import api, { withFileAuth } from '@/api/client'
 import type { ApplicationOut, CommunityMemberOut, CommunityOut, ProjectOut, UserOut } from '@/api/types'
 import ToastFeedback from '@/components/ToastFeedback.vue'
 import { useAuthStore } from '@/stores/auth'
-import { BIND_PROVIDERS, type BindField } from '@/utils/bindProviders'
 import { projectStatusLabel, stageLabel, statusLabel, statusTone } from '@/utils/statusLabel'
 
-type Tab = 'home' | 'notices' | 'profile' | 'applications' | 'bindings' | 'password'
+type Tab = 'home' | 'notices' | 'profile' | 'applications' | 'password'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -17,9 +16,13 @@ const router = useRouter()
 const tab = computed<Tab>(() => {
   const t = String(route.query.tab || 'home')
   const orgOnlyNow = auth.isCommunityAdmin && !auth.isMentor && !auth.canApplyProjects
-  if (orgOnlyNow) return 'home'
-  if (!auth.canApplyProjects && (t === 'applications' || t === 'bindings')) return 'home'
-  if (['notices', 'profile', 'applications', 'bindings', 'password', 'home'].includes(t)) {
+  if (orgOnlyNow) {
+    if (t === 'password') return 'password'
+    return 'home'
+  }
+  if (!auth.canApplyProjects && t === 'applications') return 'home'
+  if (t === 'bindings') return 'profile'
+  if (['notices', 'profile', 'applications', 'password', 'home'].includes(t)) {
     return t as Tab
   }
   return 'home'
@@ -60,10 +63,11 @@ const appsError = ref('')
 const notices = ref<{ id: number; title: string; published_at?: string | null }[]>([])
 const noticesLoading = ref(false)
 
-const bindMsg = ref('')
-const bindErr = ref('')
+const avatarUploading = ref(false)
+const avatarInput = ref<HTMLInputElement | null>(null)
 
 const pwd = ref({ old_password: '', new_password: '', confirm: '' })
+const pwdShow = ref({ old: false, next: false })
 const pwdLevel = computed(() => {
   const s = pwd.value.new_password
   if (!s) return 0
@@ -87,13 +91,9 @@ const mentorInbox = ref<ApplicationOut[]>([])
 const communityCatalog = ref<CommunityOut[]>([])
 
 const avatarText = computed(() => (auth.displayName || '?').slice(0, 2))
-
-const boundCount = computed(() => {
-  const u = auth.user
-  if (!u) return 0
-  return BIND_PROVIDERS.filter((p) => !!(u[p.field as keyof UserOut] as string | null | undefined))
-    .length
-})
+const avatarUrl = computed(
+  () => withFileAuth(auth.user?.avatar_url) || auth.user?.avatar_url || '',
+)
 
 const roleTags = computed(() => {
   const tags: string[] = []
@@ -118,7 +118,7 @@ const profileCompleteness = computed(() => {
     f.major,
     f.contact_email || auth.user?.email,
     f.bio,
-    boundCount.value > 0,
+    avatarUrl.value,
   ]
   return Math.round((checks.filter(Boolean).length / checks.length) * 100)
 })
@@ -127,15 +127,9 @@ const nextSteps = computed(() => {
   const steps: { done: boolean; text: string; action: () => void; label: string }[] = [
     {
       done: profileCompleteness.value >= 70,
-      text: '完善个人资料（学校 / 专业 / 简介）',
+      text: '完善个人资料（头像 / 学校 / 专业 / 简介）',
       action: () => setTab('profile'),
       label: '去完善',
-    },
-    {
-      done: boundCount.value > 0,
-      text: '绑定至少一个代码托管平台',
-      action: () => setTab('bindings'),
-      label: '去绑定',
     },
   ]
   if (auth.canApplyProjects) {
@@ -164,10 +158,6 @@ function syncForm(u: UserOut | null) {
     homepage_url: u.homepage_url || '',
     contact_email: u.contact_email || u.email || '',
   }
-}
-
-function boundOf(field: BindField) {
-  return (auth.user?.[field] as string | null | undefined) || ''
 }
 
 async function loadOrgHome() {
@@ -259,27 +249,83 @@ async function saveProfile() {
   }
 }
 
+async function onAvatarPicked(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  avatarUploading.value = true
+  err.value = ''
+  msg.value = ''
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const { data: up } = await api.post<{ url: string }>('/uploads/image', fd)
+    const { data } = await api.patch<UserOut>('/auth/me', { avatar_url: up.url })
+    auth.user = data
+    msg.value = '头像已更新'
+    toast.value?.show('头像已更新', 'ok')
+  } catch (e: unknown) {
+    err.value = e instanceof Error ? e.message : '头像上传失败'
+    toast.value?.show(err.value, 'err')
+  } finally {
+    avatarUploading.value = false
+  }
+}
+
+async function clearAvatar() {
+  if (!avatarUrl.value) return
+  avatarUploading.value = true
+  err.value = ''
+  try {
+    const { data } = await api.patch<UserOut>('/auth/me', { avatar_url: null })
+    auth.user = data
+    msg.value = '已移除头像'
+    toast.value?.show('已移除头像', 'ok')
+  } catch (e: unknown) {
+    err.value = e instanceof Error ? e.message : '移除失败'
+    toast.value?.show(err.value, 'err')
+  } finally {
+    avatarUploading.value = false
+  }
+}
+
 async function changePassword() {
   msg.value = ''
   err.value = ''
-  if (pwd.value.new_password.length < 6) {
+  const oldPassword = pwd.value.old_password.trim()
+  const newPassword = pwd.value.new_password.trim()
+  const confirm = pwd.value.confirm.trim()
+  if (!oldPassword) {
+    err.value = '请填写原密码'
+    return
+  }
+  if (newPassword.length < 6) {
     err.value = '新密码至少 6 位'
     return
   }
-  if (pwd.value.new_password !== pwd.value.confirm) {
+  if (newPassword !== confirm) {
     err.value = '两次输入的新密码不一致'
+    return
+  }
+  if (oldPassword === newPassword) {
+    err.value = '新密码不能与原密码相同'
     return
   }
   saving.value = true
   try {
-    await api.post('/auth/me/password', {
-      old_password: pwd.value.old_password,
-      new_password: pwd.value.new_password,
+    const { data } = await api.post<{ access_token: string; user: UserOut }>('/auth/me/password', {
+      old_password: oldPassword,
+      new_password: newPassword,
     })
+    auth.setSession(data.access_token, data.user)
     pwd.value = { old_password: '', new_password: '', confirm: '' }
-    msg.value = '密码已修改，请牢记新密码'
+    pwdShow.value = { old: false, next: false }
+    msg.value = '密码已修改，会话已续上，可继续使用工作台'
+    toast.value?.show(msg.value, 'ok')
   } catch (e: unknown) {
     err.value = e instanceof Error ? e.message : '修改失败'
+    toast.value?.show(err.value, 'err')
   } finally {
     saving.value = false
   }
@@ -325,23 +371,13 @@ watch(tab, async (t) => {
 })
 
 function consumeBindResult() {
-  const bind = route.query.bind
-  const okFlag = route.query.bind_ok
-  if (!bind) return
-  if (okFlag === '1') {
-    bindMsg.value = `已完成 ${String(bind)} 授权绑定${route.query.login ? `：${route.query.login}` : ''}`
-    bindErr.value = ''
-    void auth.fetchMe()
-  } else if (okFlag === '0') {
-    bindErr.value = String(route.query.bind_err || '授权未完成')
-    bindMsg.value = ''
-  }
+  if (!route.query.bind) return
   const q = { ...route.query } as Record<string, string | string[]>
   delete q.bind
   delete q.bind_ok
   delete q.bind_err
   delete q.login
-  router.replace({ path: '/me', query: { ...q, tab: orgOnly.value ? 'home' : 'bindings' } })
+  router.replace({ path: '/me', query: { ...q, tab: 'profile' } })
 }
 </script>
 
@@ -350,7 +386,10 @@ function consumeBindResult() {
     <div class="me-layout">
       <aside class="me-side">
         <div class="me-side-user">
-          <div class="me-side-av">{{ avatarText }}</div>
+          <div class="me-side-av" :class="{ 'has-photo': !!avatarUrl }">
+            <img v-if="avatarUrl" :src="avatarUrl" alt="" />
+            <template v-else>{{ avatarText }}</template>
+          </div>
           <div class="me-side-meta">
             <strong>{{ auth.displayName }}</strong>
             <span>{{
@@ -406,17 +445,7 @@ function consumeBindResult() {
             我的项目
             <em v-if="activeApps.length" class="me-count">{{ activeApps.length }}</em>
           </button>
-          <button v-if="!orgOnly && !mentorOnly" type="button" :class="{ on: tab === 'bindings' }" @click="setTab('bindings')">
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M17 7h-3V5h3a5 5 0 0 1 0 10h-3v-2h3a3 3 0 0 0 0-6zM10 19H7a5 5 0 0 1 0-10h3v2H7a3 3 0 0 0 0 6h3v2zm-1-6h6v2H9v-2z"
-              />
-            </svg>
-            平台绑定
-            <em v-if="boundCount" class="me-count">{{ boundCount }}</em>
-          </button>
-          <button v-if="!orgOnly" type="button" :class="{ on: tab === 'password' }" @click="setTab('password')">
+          <button type="button" :class="{ on: tab === 'password' }" @click="setTab('password')">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
               <path
                 fill="currentColor"
@@ -442,7 +471,11 @@ function consumeBindResult() {
             <div class="me-banner-bg" aria-hidden="true" />
             <div class="me-banner-body">
               <div class="me-banner-av">
-                <img v-if="orgCommunity?.logo_url" :src="orgCommunity.logo_url" alt="" />
+                <img
+                  v-if="orgCommunity?.logo_url"
+                  :src="withFileAuth(orgCommunity.logo_url) || orgCommunity.logo_url"
+                  alt=""
+                />
                 <template v-else>{{ (orgCommunity?.name || '组').slice(0, 1) }}</template>
               </div>
               <div class="me-banner-info">
@@ -451,10 +484,11 @@ function consumeBindResult() {
                   <span>社区管理员</span>
                   <span class="soft">{{ auth.user?.email }}</span>
                 </div>
-                <p>账号和密码都由组委会发放，不能在这里修改或删除。对外资料在组织工作台编辑并发布。</p>
+                <p>登录邮箱由组委会发放。密码可在左侧「修改密码」自行更换；对外资料在组织工作台编辑并发布。</p>
               </div>
               <div class="me-banner-ops">
                 <RouterLink v-if="orgCommunity" class="primary" :to="`/communities/${orgCommunity.slug}`">公开主页</RouterLink>
+                <button type="button" class="ghost" @click="setTab('password')">修改密码</button>
                 <RouterLink class="ghost" to="/org">去编辑</RouterLink>
               </div>
             </div>
@@ -535,7 +569,10 @@ function consumeBindResult() {
           <section class="me-banner">
             <div class="me-banner-bg" aria-hidden="true" />
             <div class="me-banner-body">
-              <div class="me-banner-av">{{ avatarText }}</div>
+              <div class="me-banner-av" :class="{ 'has-photo': !!avatarUrl }">
+                <img v-if="avatarUrl" :src="avatarUrl" alt="" />
+                <template v-else>{{ avatarText }}</template>
+              </div>
               <div class="me-banner-info">
                 <h1>{{ auth.displayName }}</h1>
                 <div class="me-chips">
@@ -545,7 +582,7 @@ function consumeBindResult() {
                 <p v-if="mentorOnly">
                   {{ auth.user?.email }} · {{ mentorOrgs.join('、') || '尚未分配组织' }}
                 </p>
-                <p v-else>{{ form.bio || '在这里管理实习申请、开源账号绑定与个人资料。' }}</p>
+                <p v-else>{{ form.bio || '在这里管理实习申请与个人资料。' }}</p>
                 <div v-if="!mentorOnly" class="me-progress">
                   <span>资料完整度</span>
                   <div class="bar"><i :style="{ width: profileCompleteness + '%' }" /></div>
@@ -569,13 +606,13 @@ function consumeBindResult() {
               <strong>{{ completedApps.length }}</strong>
               <span>已结项</span>
             </button>
-            <button v-if="!mentorOnly" type="button" @click="setTab('bindings')">
-              <strong>{{ boundCount }}/{{ BIND_PROVIDERS.length }}</strong>
-              <span>平台绑定</span>
-            </button>
-            <button v-else type="button">
+            <button v-if="mentorOnly" type="button">
               <strong>{{ ownedProjects.length }}</strong>
               <span>负责项目</span>
+            </button>
+            <button v-else type="button" @click="setTab('profile')">
+              <strong>{{ profileCompleteness }}%</strong>
+              <span>资料完整度</span>
             </button>
             <button type="button" @click="setTab('notices')">
               <strong>{{ notices.length }}</strong>
@@ -695,22 +732,6 @@ function consumeBindResult() {
               </ul>
             </article>
 
-            <article v-if="!mentorOnly" class="card wide">
-              <header>
-                <h2>开源账号绑定</h2>
-                <button type="button" class="more" @click="setTab('bindings')">管理</button>
-              </header>
-              <div class="bind-grid">
-                <div v-for="p in BIND_PROVIDERS" :key="p.key" class="bind-chip">
-                  <span class="logo" :style="{ background: p.color }">{{ p.mark }}</span>
-                  <div>
-                    <strong>{{ p.name }}</strong>
-                    <small v-if="boundOf(p.field)" class="ok">@{{ boundOf(p.field) }}</small>
-                    <small v-else class="no">未绑定</small>
-                  </div>
-                </div>
-              </div>
-            </article>
           </section>
         </template>
 
@@ -747,6 +768,37 @@ function consumeBindResult() {
             </div>
             <p v-if="msg" class="success-msg">{{ msg }}</p>
             <p v-if="err" class="error">{{ err }}</p>
+            <div class="avatar-edit">
+              <div class="avatar-edit-preview" :class="{ 'has-photo': !!avatarUrl }">
+                <img v-if="avatarUrl" :src="avatarUrl" alt="" />
+                <template v-else>{{ avatarText }}</template>
+              </div>
+              <div class="avatar-edit-ops">
+                <strong>头像</strong>
+                <p>支持 JPG / PNG / WebP / GIF，不超过 5MB</p>
+                <div class="avatar-edit-btns">
+                  <button type="button" class="btn sm" :disabled="avatarUploading" @click="avatarInput?.click()">
+                    {{ avatarUploading ? '上传中…' : avatarUrl ? '更换头像' : '上传头像' }}
+                  </button>
+                  <button
+                    v-if="avatarUrl"
+                    type="button"
+                    class="btn secondary sm"
+                    :disabled="avatarUploading"
+                    @click="clearAvatar"
+                  >
+                    移除
+                  </button>
+                </div>
+                <input
+                  ref="avatarInput"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  hidden
+                  @change="onAvatarPicked"
+                />
+              </div>
+            </div>
             <form class="form wide me-form" @submit.prevent="saveProfile">
               <div class="form-grid-2">
                 <label>
@@ -834,42 +886,6 @@ function consumeBindResult() {
             </div>
           </template>
 
-          <template v-else-if="tab === 'bindings'">
-            <div class="page-head">
-              <h1>平台绑定</h1>
-              <p>已绑 {{ boundCount }} / {{ BIND_PROVIDERS.length }} · 用于结项 PR 核验</p>
-            </div>
-            <p v-if="bindMsg" class="success-msg">{{ bindMsg }}</p>
-            <p v-if="bindErr" class="error">{{ bindErr }}</p>
-            <div class="link-list">
-              <article v-for="p in BIND_PROVIDERS" :key="p.key" class="link-row">
-                <div class="link-row-main">
-                  <span
-                    class="link-row-mark"
-                    :style="{
-                      background: auth.user?.oauth_avatars?.[p.key]
-                        ? `center / cover url(${auth.user.oauth_avatars[p.key]})`
-                        : p.color,
-                    }"
-                  >
-                    <template v-if="!auth.user?.oauth_avatars?.[p.key]">{{ p.mark }}</template>
-                  </span>
-                  <div class="link-row-text">
-                    <strong>{{ p.name }}</strong>
-                    <span>{{ p.desc }}</span>
-                  </div>
-                </div>
-                <div class="link-row-side">
-                  <span v-if="boundOf(p.field)" class="link-row-bound">@{{ boundOf(p.field) }}</span>
-                  <span v-else class="link-row-empty">未绑定</span>
-                  <RouterLink class="link-row-btn" :to="`/me/bind/${p.key}`">
-                    {{ boundOf(p.field) ? '管理' : '去绑定' }}
-                  </RouterLink>
-                </div>
-              </article>
-            </div>
-          </template>
-
           <template v-else>
             <div class="pwd-wrap">
               <div class="pwd-card">
@@ -881,27 +897,42 @@ function consumeBindResult() {
                     <p v-else>修改成功后请使用新密码登录，旧密码会立即失效。</p>
                   </div>
                 </div>
-                <form class="form pwd-form" @submit.prevent="changePassword">
+                <form class="form pwd-form" autocomplete="off" @submit.prevent="changePassword">
+                  <p v-if="orgOnly" class="pwd-tip">
+                    「原密码」必须是<strong>当前能登录</strong>的密码。若组委会补发过，请用补发后的密码，不要用开通时的旧密码。
+                  </p>
                   <label>
                     原密码 <span class="req">*</span>
-                    <input
-                      v-model="pwd.old_password"
-                      type="password"
-                      required
-                      autocomplete="current-password"
-                      placeholder="当前登录密码"
-                    />
+                    <div class="pwd-field">
+                      <input
+                        v-model="pwd.old_password"
+                        :type="pwdShow.old ? 'text' : 'password'"
+                        name="old_login-password"
+                        required
+                        autocomplete="off"
+                        placeholder="当前登录用的密码"
+                      />
+                      <button type="button" class="pwd-eye" @click="pwdShow.old = !pwdShow.old">
+                        {{ pwdShow.old ? '隐藏' : '显示' }}
+                      </button>
+                    </div>
                   </label>
                   <label>
                     新密码 <span class="req">*</span>
-                    <input
-                      v-model="pwd.new_password"
-                      type="password"
-                      required
-                      minlength="6"
-                      autocomplete="new-password"
-                      placeholder="至少 6 位"
-                    />
+                    <div class="pwd-field">
+                      <input
+                        v-model="pwd.new_password"
+                        :type="pwdShow.next ? 'text' : 'password'"
+                        name="new-login-password"
+                        required
+                        minlength="6"
+                        autocomplete="new-password"
+                        placeholder="至少 6 位"
+                      />
+                      <button type="button" class="pwd-eye" @click="pwdShow.next = !pwdShow.next">
+                        {{ pwdShow.next ? '隐藏' : '显示' }}
+                      </button>
+                    </div>
                     <span class="pwd-meter" :data-level="pwdLevel">
                       <i /><i /><i />
                       <em>{{ pwdHint }}</em>
@@ -912,6 +943,7 @@ function consumeBindResult() {
                     <input
                       v-model="pwd.confirm"
                       type="password"
+                      name="confirm-login-password"
                       required
                       minlength="6"
                       autocomplete="new-password"
@@ -985,6 +1017,15 @@ function consumeBindResult() {
 .pwd-form {
   max-width: none;
 }
+.pwd-tip {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  background: #f4f7fb;
+  border-radius: 8px;
+  color: #475569;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
 .pwd-form label {
   display: block;
   margin-bottom: 14px;
@@ -995,6 +1036,27 @@ function consumeBindResult() {
   width: 100%;
   margin-top: 6px;
   box-sizing: border-box;
+}
+.pwd-field {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+.pwd-field input {
+  margin-top: 0;
+  flex: 1;
+}
+.pwd-eye {
+  border: 1px solid #d0d7e2;
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  color: #334155;
+  flex-shrink: 0;
 }
 .pwd-meter {
   display: flex;
@@ -1078,6 +1140,62 @@ function consumeBindResult() {
   place-items: center;
   font-weight: 700;
   flex-shrink: 0;
+  overflow: hidden;
+}
+.me-side-av.has-photo {
+  background: transparent;
+}
+.me-side-av img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.avatar-edit {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid #e8ebf0;
+  border-radius: 12px;
+}
+.avatar-edit-preview {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: #0b3d91;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 1.35rem;
+  font-weight: 700;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.avatar-edit-preview.has-photo {
+  background: transparent;
+}
+.avatar-edit-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.avatar-edit-ops strong {
+  display: block;
+  font-size: 0.95rem;
+}
+.avatar-edit-ops p {
+  margin: 4px 0 10px;
+  color: #8c8c8c;
+  font-size: 0.82rem;
+}
+.avatar-edit-btns {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .me-side-meta strong {
   display: block;
@@ -1190,6 +1308,10 @@ function consumeBindResult() {
   font-size: 1.4rem;
   font-weight: 700;
   flex-shrink: 0;
+  overflow: hidden;
+}
+.me-banner-av.has-photo {
+  border-color: rgba(255, 255, 255, 0.45);
 }
 .me-banner-info {
   flex: 1;

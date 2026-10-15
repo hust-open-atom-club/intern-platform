@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
 import api from '@/api/client'
 import LiaisonBubble from '@/components/LiaisonBubble.vue'
 import LiaisonComposer from '@/components/LiaisonComposer.vue'
-import type { ApplicationOut, CommunityOut } from '@/api/types'
+import type { CommunityOut } from '@/api/types'
 import { formatDateTime, statusLabel } from '@/utils/statusLabel'
 
 type Mode = 'student' | 'mentor' | 'committee'
@@ -31,8 +30,6 @@ const pickedStudent = ref<number | null>(null)
 const pickedMentor = ref<number | null>(null)
 const thread = ref<Msg[]>([])
 const draft = ref('')
-const finals = ref<ApplicationOut[]>([])
-const finalNote = ref('')
 const error = ref('')
 const msg = ref('')
 const endOpen = ref(false)
@@ -61,8 +58,6 @@ async function loadPeople() {
   mentors.value = data.mentors
   if (!pickedStudent.value && students.value[0]) pickedStudent.value = students.value[0].application_id
   if (!pickedMentor.value && mentors.value[0]) pickedMentor.value = mentors.value[0].user_id
-  const { data: inbox } = await api.get<ApplicationOut[]>('/applications/inbox')
-  finals.value = inbox.filter((a) => a.status === 'community_final_review')
 }
 
 async function loadThread() {
@@ -116,21 +111,6 @@ async function send(body: string) {
     await loadThread()
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '发送失败'
-  } finally {
-    busy.value = false
-  }
-}
-
-async function submitFinal(id: number) {
-  if (!finalNote.value.trim()) return
-  busy.value = true
-  try {
-    await api.post(`/applications/${id}/community-final`, { note: finalNote.value.trim() })
-    msg.value = '结项材料已报送，组委会已自动接收'
-    finalNote.value = ''
-    await loadPeople()
-  } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '提交失败'
   } finally {
     busy.value = false
   }
@@ -202,7 +182,7 @@ onMounted(() => {
             ? '一次只通知左边这位学生，记录只留在这个人下面。'
             : mode === 'mentor'
               ? '点开一位导师，只和这一位来回说。'
-              : '和组委会的对话随时可以写，不等结项材料。'
+              : '和组委会的对话随时可以写，不等实习申请审核。'
         }}
       </p>
     </div>
@@ -251,9 +231,6 @@ onMounted(() => {
           <h2 v-else>选择左边的人</h2>
           <span v-if="mode === 'student'">正式通知</span>
           <span v-else>来回对话</span>
-          <RouterLink v-for="item in finals" :key="item.id" class="submit-link" :to="`/org/final/${item.id}`">
-            提交{{ item.student_name }}的结项
-          </RouterLink>
         </header>
         <p v-if="mode === 'student' && studentNow?.ended" class="hint">对接已结束，不能再发通知。</p>
         <p v-else-if="mode === 'student' && studentNow?.case_status === 'pending'" class="hint">终止申请已交给组委会，查证通过前合作继续。</p>
@@ -313,19 +290,58 @@ onMounted(() => {
 .modes button { border: 0; border-right: 1px solid #c5d0e0; background: #fff; padding: 8px 16px; cursor: pointer; font: inherit; color: #334155; }
 .modes button:last-child { border-right: 0; }
 .modes button.on { background: #1677ff; color: #fff; }
-.board { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 12px; min-height: calc(100vh - 250px); }
-.col { background: #fff; border: 1px solid #b7c3d4; border-radius: 10px; box-shadow: 0 1px 2px rgba(20, 40, 80, 0.05); min-height: 420px; }
-.people, .finals { padding: 12px; overflow: auto; background: #f7f9fc; }
+.board {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 12px;
+  height: calc(100vh - 250px);
+  min-height: 420px;
+  overflow: hidden;
+}
+.col {
+  background: #fff;
+  border: 1px solid #b7c3d4;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(20, 40, 80, 0.05);
+  min-height: 0;
+  height: 100%;
+}
+.people, .finals {
+  padding: 12px;
+  min-height: 0;
+  overflow: auto;
+  overflow-y: auto;
+  background: #f7f9fc;
+}
 .people h2, .finals h2 { margin: 0 0 10px; font-size: 0.95rem; }
 .people button, .finals article { display: block; width: 100%; text-align: left; border: 1px solid #c5d0e0; background: #fff; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; font: inherit; }
 .people button.on { border-color: #1677ff; background: #e8f3ff; box-shadow: inset 3px 0 0 #1677ff; }
 .people button.static { cursor: default; }
 .people span, .finals span, .log small { display: block; color: #64748b; font-size: 0.8rem; margin-top: 2px; }
-.talk { display: flex; flex-direction: column; padding: 0; background: #fff; }
+.talk {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  background: #fff;
+  min-height: 0;
+  overflow: hidden;
+}
 .talk header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 12px 14px; border-bottom: 1px solid #d5deea; }
 .talk h2 { margin: 0; font-size: 1.05rem; }
 .talk header .submit-link { color: #1677ff; font-size: 0.88rem; font-weight: 650; text-decoration: none; }
-.log { flex: 1; margin: 12px; padding: 12px; overflow: auto; background: #eef3f9; border: 1px dashed #b7c3d4; border-radius: 8px; display: flex; flex-direction: column; gap: 8px; }
+.log {
+  flex: 1;
+  min-height: 0;
+  margin: 12px;
+  padding: 12px;
+  overflow: auto;
+  background: #eef3f9;
+  border: 1px dashed #b7c3d4;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .log article { background: #fff; border: 1px solid #d5deea; border-radius: 8px; padding: 8px 10px; }
 .log article.mine { border-color: #91caff; background: #f0f7ff; }
 .log p { margin: 4px 0 0; }
@@ -337,5 +353,8 @@ onMounted(() => {
 .btn.outline { background: #fff; color: #1677ff; border: 1px solid #1677ff; }
 .talk :deep(.composer) { padding: 0 12px 12px; }
 form textarea, .finals textarea { width: 100%; box-sizing: border-box; border: 1px solid #b7c3d4; border-radius: 8px; padding: 8px 10px; background: #fff; font: inherit; }
-@media (max-width: 1100px) { .board { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) {
+  .board { grid-template-columns: 1fr; height: auto; overflow: visible; }
+  .people { max-height: 40vh; }
+}
 </style>

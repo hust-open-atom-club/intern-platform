@@ -111,12 +111,12 @@ def main() -> int:
                 "intern-platform-web-1",
                 "sh",
                 "-c",
-                "grep -l 选拔审核 /usr/share/nginx/html/assets/*.js; grep -l expectText /usr/share/nginx/html/assets/*.js; grep -l ConfirmDialog /usr/share/nginx/html/assets/*.js | head -1",
+                "grep -l 实习申请 /usr/share/nginx/html/assets/*.js; grep -l expectText /usr/share/nginx/html/assets/*.js; grep -l ConfirmDialog /usr/share/nginx/html/assets/*.js | head -1; grep -L 选拔审核 /usr/share/nginx/html/assets/*.js | head -1",
             ],
             text=True,
             timeout=20,
         )
-        rows.append(("fe marker 选拔审核", "OrgPortal" in out or "选拔" in out or out.strip() != "", out.strip()[:120]))
+        rows.append(("fe marker 实习申请", "实习" in out or "OrgPortal" in out or out.strip() != "", out.strip()[:120]))
         rows.append(("fe marker expectText", "ConfirmDialog" in out or "expectText" in out or "Confirm" in out, out.strip()[:120]))
     except Exception:
         try:
@@ -129,7 +129,7 @@ def main() -> int:
                 url = p if p.startswith("http") else WEB + p
                 with urllib.request.urlopen(url, timeout=20) as r:
                     joined += r.read().decode("utf-8", "replace")
-            rows.append(("fe marker 选拔审核", "选拔审核" in joined or "OrgPortal" in joined, f"chunks={len(parts)}"))
+            rows.append(("fe marker 实习申请", "实习申请" in joined or "组织工作台" in joined, f"chunks={len(parts)}"))
             rows.append(("fe marker expectText", "expectText" in joined or "ConfirmDialog" in joined, f"chunks={len(parts)}"))
         except Exception as e:
             rows.append(("fe markers", WEB.startswith("http://127.0.0.1"), str(e)[:160]))

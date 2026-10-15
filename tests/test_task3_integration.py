@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import uuid
+import zipfile
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -90,14 +92,36 @@ def test_full_path_draft_to_completed_writes_ledger(client_and_db) -> None:
     assert r.status_code == 200, r.text
     assert r.json()["to_status"] == "community_final_review"
 
-    # 导师通过后进社区报送；社区提交后组委会自动接收并完成结项
+    # 学生申请奖励 → 社区通过 → 组委会自动计入结项
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("readme.txt", "reward proof")
+    up = client.post(
+        "/api/v1/uploads/zip",
+        headers=_auth(student),
+        files={"file": ("reward.zip", buf.getvalue(), "application/zip")},
+    )
+    assert up.status_code == 200, up.text
     r = client.post(
-        f"/api/v1/applications/{app_id}/community-final",
+        f"/api/v1/applications/{app_id}/messages",
+        headers={**_auth(student), "X-Idempotency-Key": _idem()},
+        json={
+            "body": "说明：集成测试奖励\n手机：13800000000",
+            "kind": "reward",
+            "attachment_url": up.json()["url"],
+            "attachment_name": "reward.zip",
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+    r = client.post(
+        f"/api/v1/applications/{app_id}/reward-decision",
         headers={**_auth(admin), "X-Idempotency-Key": _idem()},
-        json={"note": "社区已核对材料，报送组委会"},
+        json={"decision": "approved"},
     )
     assert r.status_code == 200, r.text
-    assert r.json()["to_status"] == "completed"
+    r = client.get(f"/api/v1/applications/{app_id}", headers=_auth(student))
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "completed"
 
     db = SessionLocal()
     try:
@@ -142,9 +166,11 @@ def test_idempotent_replay_no_double_review(client_and_db) -> None:
 
     db = SessionLocal()
     try:
-        # submit+start (2) + approve_mentor (1)；回放不加
+        # submit+start (2) + approve_mentor/community/committee (3)；回放不加
         count = len(list(db.scalars(select(ReviewRecord)).all()))
-        assert count == 3
+        assert count == 5
+        assert r1.json()["to_status"] == "selected"
+        # 幂等回放只命中首条 action 的记录
         assert r2.json()["to_status"] == "community_review"
     finally:
         db.close()
