@@ -1475,7 +1475,9 @@ onMounted(load)
     </section>
 
     <section v-else-if="tab === 'site'" class="panel site">
-      <p class="howto">先选要改的页面，再改右边的文字。预览和访客看到的是同一块内容。满意后点底部的发布，公开页才会换成新的。</p>
+      <p class="howto">
+        「首页大图」发布后会出现在实习站首页首屏（不自动轮播；多张时访客可手动切）。先改右边内容，再点「发布到首页」。
+      </p>
       <div class="filters">
         <button type="button" :class="{ on: siteKind === 'slides' }" @click="siteKind = 'slides'">首页大图</button>
         <button type="button" :class="{ on: siteKind === 'news' }" @click="siteKind = 'news'; openedPub = null">最新动态</button>
