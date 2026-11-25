@@ -19,6 +19,7 @@ from intern_platform.models.liaison_message import LiaisonMessage
 from intern_platform.models.project import Project
 from intern_platform.models.role import Role, UserRole
 from intern_platform.models.user import User
+from intern_platform.services.application_presenters import application_real_name
 from intern_platform.services.message_codec import pack_message
 from intern_platform.services.notification_service import NotificationService
 
@@ -190,7 +191,7 @@ def people(
         students.append(
             {
                 "user_id": student.id,
-                "name": student.display_name,
+                "name": application_real_name(app) or student.display_name,
                 "email": student.email,
                 "project_id": project.id,
                 "project_title": project.title,
@@ -480,7 +481,10 @@ def request_terminate(
     role = db.scalar(select(Role).where(Role.code == "committee"))
     if role:
         title = f"{label}申请终止合作"
-        brief = f"{student.display_name if student else '学生'} · {project.title if project else ''} · {REASON_LABEL.get(body.reason_code, body.reason_code)}"
+        who = (application_real_name(app) if app else None) or (
+            student.display_name if student else "学生"
+        )
+        brief = f"{who} · {project.title if project else ''} · {REASON_LABEL.get(body.reason_code, body.reason_code)}"
         for uid in db.scalars(select(UserRole.user_id).where(UserRole.role_id == role.id)).all():
             NotificationService(db).create(user_id=uid, title=title, body=brief, kind="community_committee")
     db.commit()
@@ -510,7 +514,11 @@ def list_terminations(
             {
                 "id": row.id,
                 "community_name": community.name if community else "社区",
-                "student_name": student.display_name if student else "学生",
+                "student_name": (
+                    (application_real_name(app) if app else None)
+                    or (student.display_name if student else None)
+                    or "学生"
+                ),
                 "project_title": project.title if project else "",
                 "reason_code": row.reason_code,
                 "reason_label": REASON_LABEL.get(row.reason_code or "", row.reason_code or ""),

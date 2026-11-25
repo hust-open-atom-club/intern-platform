@@ -23,6 +23,7 @@ from intern_platform.models.review_record import ReviewRecord
 from intern_platform.models.role import Role, UserRole
 from intern_platform.models.user import User
 from intern_platform.repositories.audit_log import AuditLogRepository
+from intern_platform.services.application_presenters import application_real_name
 from intern_platform.services.notification_service import NotificationService
 
 router = APIRouter(tags=["committee-ops"])
@@ -255,7 +256,7 @@ def list_completions(
                 "application_id": app.id,
                 "project_title": project.title,
                 "community_name": community.name,
-                "student_name": student.display_name,
+                "student_name": application_real_name(app) or student.display_name,
                 "finished_at": stamp.isoformat(sep=" ", timespec="minutes"),
             }
         )

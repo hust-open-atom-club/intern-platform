@@ -21,7 +21,10 @@ from intern_platform.models.user import User
 from intern_platform.schemas.application import TransitionRequest, TransitionResponse
 from intern_platform.schemas.business import ApplicationOut, ApplicationUpdate, RewardDecision
 from intern_platform.services.message_service import MessageService
-from intern_platform.services.application_presenters import application_to_out
+from intern_platform.services.application_presenters import (
+    application_real_name,
+    application_to_out,
+)
 from intern_platform.services.application_service import ApplicationService
 from intern_platform.services.application_workflow import (
     ApplicationWorkflowService,
@@ -130,7 +133,7 @@ def reward_inbox(
             item = RewardInboxItem(
                 application_id=app.id,
                 project_title=project.title,
-                student_name=student.display_name,
+                student_name=application_real_name(app) or student.display_name,
                 body=str(parsed.get("text") or ""),
                 attachment_url=str(parsed.get("attachment_url") or "") or None,
                 attachment_name=str(parsed.get("attachment_name") or "") or None,
