@@ -143,17 +143,61 @@ def main() -> int:
     if proj is None and projects:
         proj = projects[0]
 
+    # 种子不再预置课题：本地/CI 若无公开项目，现场建一条再测
+    if proj is None:
+        mentor = login("mentor@demo.hust.edu.cn")
+        code, text = call("GET", "/communities/mine", token=admin)
+        mine_c = json.loads(text) if code == 200 else []
+        mid = None
+        if mentor:
+            c_me, t_me = call("GET", "/auth/me", token=mentor)
+            me_m = json.loads(t_me) if c_me == 200 else {}
+            mid = me_m.get("id")
+        if mentor and mid and mine_c:
+            cid = mine_c[0]["id"]
+            suffix = uuid.uuid4().hex[:6]
+            c_create, t_create = call(
+                "POST",
+                "/projects",
+                token=admin,
+                body={
+                    "community_id": cid,
+                    "title": f"安全核对课题-{suffix}",
+                    "summary": "verify_security probe",
+                    "quota": 2,
+                    "description": "temporary project for verify_security",
+                    "mentor_id": mid,
+                },
+            )
+            if c_create in (200, 201):
+                created = json.loads(t_create)
+                c_pub, t_pub = call(
+                    "POST", f"/projects/{created['id']}/publish", token=mentor
+                )
+                if c_pub != 200:
+                    c_pub, t_pub = call(
+                        "POST", f"/projects/{created['id']}/publish", token=admin
+                    )
+                if c_pub == 200:
+                    proj = json.loads(t_pub) if t_pub else created
+                else:
+                    bad(f"安全核对课题发布失败（{c_pub}）")
+            else:
+                bad(f"安全核对课题创建失败（{c_create}）")
+        else:
+            bad("没有公开课题，也无法用演示组织/导师创建探针课题")
+
     code, text = call("GET", "/applications/mine", token=student)
     apps = json.loads(text) if code == 200 else []
     if not apps and proj:
-        # 云端纯学生可能还没有申请：先建一条草稿再测自审拦截
+        # 纯学生可能还没有申请：先建一条草稿再测自审拦截
         code, text = call(
             "POST",
             f"/projects/{proj['id']}/applications",
             token=student,
             body={
                 "statement": "security-self-approve-check",
-                "extra_fields": {},
+                "extra_fields": {"real_name": "安全核对生"},
                 "submit": False,
             },
         )
