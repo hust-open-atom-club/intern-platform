@@ -15,7 +15,7 @@ type Mode = 'orgs' | 'tasks' | 'mine'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const mode = ref<Mode>('orgs')
+const mode = ref<Mode>('tasks')
 
 function setMode(next: Mode) {
   mode.value = next
@@ -230,7 +230,12 @@ function goLogin() {
 onMounted(async () => {
   clearTrail()
   const tab = String(route.query.tab || '')
-  if (tab === 'tasks' || tab === 'orgs' || (tab === 'mine' && !auth.hasRole('committee'))) mode.value = tab
+  if (tab === 'tasks' || tab === 'orgs' || (tab === 'mine' && !auth.hasRole('committee'))) {
+    mode.value = tab as Mode
+  } else if (!tab) {
+    mode.value = 'tasks'
+    void router.replace({ query: { ...route.query, tab: 'tasks' } })
+  }
   try {
     const [cRes, pRes] = await Promise.all([
       api.get<CommunityOut[]>('/communities', { params: { status: 'approved' } }),
@@ -363,8 +368,8 @@ watch(
       @confirm="confirmRetire"
     />
     <header class="browse-hero">
-      <h1>查看项目</h1>
-      <p>先选社区了解方向，再领取该社区任务。</p>
+      <h1>查看全部项目</h1>
+      <p>默认展示可申请任务；需要时再切换到「社区列表」按组织浏览。</p>
     </header>
 
     <div class="browse-tabs" role="tablist">

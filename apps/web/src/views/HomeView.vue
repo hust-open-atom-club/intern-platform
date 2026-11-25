@@ -155,11 +155,11 @@ const processSteps = [
       <div class="section-head">
         <h2>开始参与</h2>
         <div class="accent-line" />
-        <p>先阅读参与指南，再浏览项目；登录请点右上角「登录」并选择账户类型</p>
+        <p>先浏览可申请课题，再按需查看社区；登录请点右上角「登录」并选择账户类型</p>
       </div>
       <div class="btn-row" style="justify-content: center">
-        <RouterLink class="btn student" to="/projects">浏览项目</RouterLink>
-        <RouterLink class="btn secondary" to="/guide">阅读参与指南</RouterLink>
+        <RouterLink class="btn student" to="/projects?tab=tasks">查看全部项目</RouterLink>
+        <RouterLink class="btn secondary" to="/guide">学生申请指南</RouterLink>
         <RouterLink class="btn secondary" to="/projects?tab=orgs">按社区选择</RouterLink>
       </div>
     </section>

@@ -87,7 +87,7 @@ const avatarUrl = computed(() => withFileAuth(auth.user?.avatar_url) || auth.use
             to="/org"
           >组织工作台</RouterLink>
           <RouterLink to="/">首页</RouterLink>
-          <RouterLink v-if="!auth.isLoggedIn || auth.canApplyProjects || auth.hasRole('committee')" to="/projects">查看项目</RouterLink>
+          <RouterLink v-if="!auth.isLoggedIn || auth.canApplyProjects || auth.hasRole('committee')" to="/projects?tab=tasks">查看全部项目</RouterLink>
           <RouterLink to="/completed">结项公示</RouterLink>
           <RouterLink to="/news">最新动态</RouterLink>
           <RouterLink to="/guide">参与指南</RouterLink>
