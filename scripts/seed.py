@@ -25,6 +25,7 @@ from intern_platform.models import (  # noqa: E402
     Community,
     CommunityExtension,
     IntegrationSetting,
+    Project,
     Role,
     User,
     UserRole,
