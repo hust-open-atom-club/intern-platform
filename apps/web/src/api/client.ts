@@ -11,11 +11,22 @@ function keyFor(scope: 'public' | 'ops'): string {
   return scope === 'ops' ? OPS_TOKEN_KEY : PUBLIC_TOKEN_KEY
 }
 
-/** 每个窗口各记各的登录。localStorage 两个窗口共用，登录会互相顶掉。 */
+/** 登录态写在 localStorage，同站多标签页共享；组委会与公开入口仍分 key。 */
 function readToken(scope: 'public' | 'ops'): string | null {
   const key = keyFor(scope)
-  localStorage.removeItem(key)
-  return sessionStorage.getItem(key)
+  const fromLocal = localStorage.getItem(key)
+  if (fromLocal) {
+    // 迁移旧版 sessionStorage，避免刷新后突然掉登录
+    sessionStorage.removeItem(key)
+    return fromLocal
+  }
+  const legacy = sessionStorage.getItem(key)
+  if (legacy) {
+    localStorage.setItem(key, legacy)
+    sessionStorage.removeItem(key)
+    return legacy
+  }
+  return null
 }
 
 export function getStoredToken(scope?: 'public' | 'ops'): string | null {
@@ -46,9 +57,9 @@ export function withFileAuth(url?: string | null): string {
 export function setStoredToken(token: string | null, scope?: 'public' | 'ops') {
   const useOps = scope ? scope === 'ops' : isOpsPath()
   const key = keyFor(useOps ? 'ops' : 'public')
-  localStorage.removeItem(key)
-  if (token) sessionStorage.setItem(key, token)
-  else sessionStorage.removeItem(key)
+  sessionStorage.removeItem(key)
+  if (token) localStorage.setItem(key, token)
+  else localStorage.removeItem(key)
 }
 
 function uuid(): string {

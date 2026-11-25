@@ -19,6 +19,13 @@ def _parse_extra(raw: str | None) -> dict[str, Any]:
     return obj if isinstance(obj, dict) else {}
 
 
+def application_real_name(app: Application) -> str | None:
+    """报名时填写的真实姓名（存于 extra_fields.real_name）。"""
+    extra = _parse_extra(getattr(app, "extra_fields", None))
+    name = str(extra.get("real_name") or "").strip()
+    return name or None
+
+
 def _pdf_fields(app: Application) -> tuple[str | None, str | None]:
     extra = _parse_extra(app.extra_fields)
     resume = extra.get("resume_pdf") or app.attachment_url
@@ -49,18 +56,19 @@ def application_to_out(app: Application) -> ApplicationOut:
     project = getattr(app, "project", None)
     student = getattr(app, "student", None)
     resume_pdf, design_pdf = _pdf_fields(app)
-    student_name = None
+    student_name = application_real_name(app)
     student_email = None
     if student is not None:
         student_email = student.email
-        name = (student.display_name or "").strip()
-        # 避免展示占位名「学生」「演示学生」时优先用邮箱前缀 / 简历文件名推断
-        if name and name not in ("学生", "演示学生") and not name.startswith("学生"):
-            student_name = name
-        elif student.email:
-            student_name = student.email.split("@", 1)[0]
-        else:
-            student_name = name or None
+        if not student_name:
+            name = (student.display_name or "").strip()
+            # 避免展示占位名「学生」「演示学生」时优先用邮箱前缀 / 简历文件名推断
+            if name and name not in ("学生", "演示学生") and not name.startswith("学生"):
+                student_name = name
+            elif student.email:
+                student_name = student.email.split("@", 1)[0]
+            else:
+                student_name = name or None
     if not student_name and resume_pdf:
         # 从「于鸿伟-简历.pdf」类文件名提取姓名
         try:

@@ -526,10 +526,11 @@ def directory(
         stmt = stmt.where(or_(User.display_name.contains(keyword), User.email.contains(keyword)))
     distinct_ids = stmt.with_only_columns(User.id).distinct().subquery()
     total = int(db.scalar(select(func.count()).select_from(distinct_ids)) or 0)
+    # 新注册账号排前面，避免导师自助注册后在末页找不到
     users = db.scalars(
         select(User)
         .where(User.id.in_(select(distinct_ids.c.id)))
-        .order_by(User.id.asc())
+        .order_by(User.id.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()

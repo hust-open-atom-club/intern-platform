@@ -43,6 +43,8 @@ const loading = ref(true)
 const error = ref('')
 const confirmOpen = ref(false)
 const pending = ref<'approve' | 'reject' | null>(null)
+const leaveOpen = ref(false)
+const leaveTargetId = ref(0)
 
 const preferTab = ref<WorkTab | null>(null)
 const pickedProjectId = ref(0)
@@ -67,6 +69,38 @@ const talkTargets = computed(() =>
 const communityNames = computed(() =>
   myCommunities.value.map((item) => item.name).filter(Boolean).join('、'),
 )
+
+const leaveTargetName = computed(
+  () => myCommunities.value.find((c) => c.id === leaveTargetId.value)?.name || '社区',
+)
+
+function askLeaveCommunity(communityId?: number) {
+  const id = communityId || talkCommunityId.value || myCommunities.value[0]?.id || 0
+  if (!id) {
+    toast.value?.show('尚未绑定社区', 'err')
+    return
+  }
+  leaveTargetId.value = id
+  leaveOpen.value = true
+}
+
+async function confirmLeaveCommunity() {
+  const id = leaveTargetId.value
+  if (!id) return
+  busy.value = true
+  try {
+    await api.post(`/communities/${id}/leave`)
+    toast.value?.show(`已退出「${leaveTargetName.value}」`, 'ok')
+    leaveOpen.value = false
+    leaveTargetId.value = 0
+    await auth.fetchMe()
+    await load()
+  } catch (e: unknown) {
+    toast.value?.show(e instanceof Error ? e.message : '退出失败', 'err')
+  } finally {
+    busy.value = false
+  }
+}
 
 const talkName = computed(() => talkTargets.value.find((item) => item.id === talkCommunityId.value)?.name || '社区')
 
@@ -458,12 +492,33 @@ onMounted(load)
       confirm-text="确定"
       @confirm="runDecide"
     />
+    <ConfirmDialog
+      v-model:open="leaveOpen"
+      title="退出社区"
+      :message="`退出「${leaveTargetName}」后，将不再收到该社区的任务与对话。若仍有负责项目，需请社区管理员先改派。`"
+      danger
+      confirm-text="退出"
+      @confirm="confirmLeaveCommunity"
+    />
 
     <header class="top">
       <div class="top-head">
         <div>
           <h1>导师工作台</h1>
-          <p v-if="communityNames" class="org-line">所属社区：{{ communityNames }}</p>
+          <p v-if="myCommunities.length" class="org-line">
+            所属社区：
+            <template v-for="(c, i) in myCommunities" :key="c.id">
+              <span v-if="i">、</span>{{ c.name }}
+            </template>
+            <button
+              class="leave-link"
+              type="button"
+              :disabled="busy"
+              @click="askLeaveCommunity()"
+            >
+              {{ myCommunities.length > 1 ? '退出当前社区' : '退出社区' }}
+            </button>
+          </p>
           <p v-else class="org-line warn">尚未绑定社区。请向社区管理员索取邀请码，在「导师注册」页加入。</p>
           <div class="task-line">
             <label class="task-field">
@@ -773,6 +828,22 @@ onMounted(load)
   color: #595959;
 }
 .org-line.warn { color: #ad6800; }
+.leave-link {
+  margin-left: 10px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #b91c1c;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.leave-link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .hint-line { color: #8c8c8c !important; max-width: 36rem; }
 .task-line {
   display: flex;

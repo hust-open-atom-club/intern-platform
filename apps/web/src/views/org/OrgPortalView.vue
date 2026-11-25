@@ -20,25 +20,31 @@ const router = useRouter()
 const toast = ref<InstanceType<typeof ToastFeedback> | null>(null)
 const unpublishOpen = ref(false)
 const unpublishTarget = ref<ProjectOut | null>(null)
+const removeMentorOpen = ref(false)
+const removeMentorTarget = ref<CommunityMemberOut | null>(null)
 
 const tab = ref<Tab>(readOrgTab(route.query.tab))
+const createFormOpen = ref(false)
+const rewardPendingCount = ref(0)
 
 function readOrgTab(value: unknown): Tab {
-  const name = String(value || 'home')
+  // 默认进「项目」，先处理任务与列表，主页编辑单独点 Tab
+  const name = String(value || 'projects')
   return (
     ['home', 'mentors', 'projects', 'liaison', 'rewards'] as string[]
   ).includes(name)
     ? (name as Tab)
-    : 'home'
+    : 'projects'
 }
 
 function openTab(next: Tab) {
   tab.value = next
-  const query = next === 'home' ? {} : { tab: next }
+  const query = { tab: next }
   void router.replace({ path: '/org', query })
   if (next === 'mentors' || next === 'projects') {
     void loadMentors().catch(() => undefined)
   }
+  if (next === 'rewards') void loadRewards().catch(() => undefined)
 }
 
 watch(
@@ -64,7 +70,7 @@ type RewardItem = {
 }
 const rewards = ref<RewardItem[]>([])
 const rewardYears = ref<number[]>([])
-const rewardYear = ref(String(new Date().getFullYear()))
+const rewardYear = ref('all')
 const rewardQuery = ref('')
 const rewardStatus = ref('pending')
 const rejectId = ref<number | null>(null)
@@ -131,6 +137,29 @@ const previewIntroKey = computed(() =>
     .map((b) => `${b.type}:${b.url || ''}:${(b.text || '').slice(0, 24)}`)
     .join('|'),
 )
+
+function askRemoveMentor(m: CommunityMemberOut) {
+  removeMentorTarget.value = m
+  removeMentorOpen.value = true
+}
+
+async function confirmRemoveMentor() {
+  const m = removeMentorTarget.value
+  const cid = myCommunity.value?.id
+  if (!m || !cid) return
+  busy.value = true
+  try {
+    await api.delete(`/communities/${cid}/members/${m.user_id}`)
+    toast.value?.show(`已移除导师 ${mentorLabel(m)}`, 'ok')
+    removeMentorOpen.value = false
+    removeMentorTarget.value = null
+    await loadMentors()
+  } catch (e: unknown) {
+    toast.value?.show(e instanceof Error ? e.message : '移除失败', 'err')
+  } finally {
+    busy.value = false
+  }
+}
 
 function mentorLabel(m: Pick<CommunityMemberOut, 'display_name' | 'email'>) {
   const name = (m.display_name || '').trim()
@@ -239,11 +268,17 @@ async function load() {
 
 async function loadRewards() {
   const year = rewardYear.value === 'all' ? undefined : Number(rewardYear.value)
-  const { data } = await api.get<{ years: number[]; items: RewardItem[] }>('/applications/rewards/inbox', {
-    params: { year, q: rewardQuery.value.trim(), status: rewardStatus.value },
-  })
-  rewardYears.value = data.years
-  rewards.value = data.items
+  const [dataRes, pendingRes] = await Promise.all([
+    api.get<{ years: number[]; items: RewardItem[] }>('/applications/rewards/inbox', {
+      params: { year, q: rewardQuery.value.trim(), status: rewardStatus.value },
+    }),
+    api.get<{ years: number[]; items: RewardItem[] }>('/applications/rewards/inbox', {
+      params: { status: 'pending' },
+    }),
+  ])
+  rewardYears.value = dataRes.data.years
+  rewards.value = dataRes.data.items
+  rewardPendingCount.value = pendingRes.data.items.length
 }
 
 async function decideReward(id: number, decision: 'approved' | 'rejected') {
@@ -355,6 +390,7 @@ async function createProject() {
       description: '',
       mentor_id: '',
     }
+    createFormOpen.value = false
     await loadProjects()
   } catch (e: unknown) {
     toast.value?.show(e instanceof Error ? e.message : '创建失败', 'err')
@@ -363,22 +399,26 @@ async function createProject() {
   }
 }
 
+async function patchPreviewProject(id: number) {
+  await api.patch(`/projects/${id}`, {
+    mentor_id: Number(editForm.value.mentor_id) || undefined,
+    title: editForm.value.title.trim(),
+    summary: editForm.value.summary || null,
+    description: editForm.value.description || null,
+    tech_stack: editForm.value.tech_stack
+      ? editForm.value.tech_stack.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+      : null,
+    difficulty: editForm.value.difficulty || null,
+    quota: Number(editForm.value.quota) || 1,
+    repo_url: editForm.value.repo_url || null,
+  })
+}
+
 async function savePreview() {
   if (!previewId.value) return
   busy.value = true
   try {
-    await api.patch(`/projects/${previewId.value}`, {
-      mentor_id: Number(editForm.value.mentor_id) || undefined,
-      title: editForm.value.title.trim(),
-      summary: editForm.value.summary || null,
-      description: editForm.value.description || null,
-      tech_stack: editForm.value.tech_stack
-        ? editForm.value.tech_stack.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
-        : null,
-      difficulty: editForm.value.difficulty || null,
-      quota: Number(editForm.value.quota) || 1,
-      repo_url: editForm.value.repo_url || null,
-    })
+    await patchPreviewProject(previewId.value)
     toast.value?.show(previewOffline.value ? '修改已保存。要上线再点重新发布' : '已保存', 'ok')
     await loadProjects()
   } catch (e: unknown) {
@@ -418,6 +458,7 @@ function openPreview(p: ProjectOut) {
     toast.value?.show('已有学生结项，不能再改任务内容', 'err')
     return
   }
+  createFormOpen.value = false
   previewId.value = p.id
   previewOffline.value = p.status === 'offline'
   editForm.value = {
@@ -435,8 +476,12 @@ function openPreview(p: ProjectOut) {
 async function publish(id: number) {
   busy.value = true
   try {
+    // 重新发布前先落库编辑表单，避免「只点发布、未点保存」导致旧详情仍上线
+    if (previewId.value === id) {
+      await patchPreviewProject(id)
+    }
     await api.post(`/projects/${id}/publish`)
-    toast.value?.show('已发布', 'ok')
+    toast.value?.show(previewId.value === id ? '已保存并发布' : '已发布', 'ok')
     if (previewId.value === id) cancelPreview()
     await loadProjects()
   } catch (e: unknown) {
@@ -499,10 +544,25 @@ onMounted(async () => {
       @cancel="unpublishTarget = null"
       @confirm="confirmUnpublish"
     />
+    <ConfirmDialog
+      :open="removeMentorOpen"
+      title="移除导师"
+      :message="
+        removeMentorTarget
+          ? `将「${mentorLabel(removeMentorTarget)}」移出本社区。若其仍负责项目，需先改派或下架。`
+          : ''
+      "
+      confirm-text="移除"
+      cancel-text="取消"
+      danger
+      @update:open="removeMentorOpen = $event"
+      @cancel="removeMentorTarget = null"
+      @confirm="confirmRemoveMentor"
+    />
     <header class="head">
       <div>
         <h1>{{ myCommunity?.name || '组织工作台' }}</h1>
-        <p class="sub">改对外展示、导师和项目。已发布的主页从个人中心查看。</p>
+        <p class="sub">管理项目与导师；社区主页编辑后点「发布到公开主页」才会对访客生效。</p>
       </div>
       <div v-if="myCommunity?.slug" class="head-actions">
         <RouterLink class="link" :to="`/communities/${myCommunity.slug}`">查看公开主页</RouterLink>
@@ -518,26 +578,29 @@ onMounted(async () => {
 
     <template v-else>
       <nav class="tabs" aria-label="管理分区">
-        <button type="button" :class="{ on: tab === 'home' }" @click="openTab('home')">社区主页</button>
-        <button type="button" :class="{ on: tab === 'mentors' }" @click="openTab('mentors')">
-          导师 <span>{{ mentors.length }}</span>
-        </button>
         <button type="button" :class="{ on: tab === 'projects' }" @click="openTab('projects')">
           项目 <span>{{ orgProjects.length }}</span>
         </button>
-        <button type="button" :class="{ on: tab === 'liaison' }" @click="openTab('liaison')">社区对接</button>
         <button type="button" :class="{ on: tab === 'rewards' }" @click="openTab('rewards')">
-          实习申请 <span>{{ rewards.length }}</span>
+          结项后实习审核 <span>{{ rewardPendingCount }}</span>
         </button>
+        <button type="button" :class="{ on: tab === 'mentors' }" @click="openTab('mentors')">
+          导师 <span>{{ mentors.length }}</span>
+        </button>
+        <button type="button" :class="{ on: tab === 'liaison' }" @click="openTab('liaison')">社区对接</button>
+        <button type="button" :class="{ on: tab === 'home' }" @click="openTab('home')">社区主页编辑</button>
       </nav>
 
       <!-- Tab: 主页 — 左编辑 / 右预览 -->
       <section v-if="tab === 'home'" class="panel home-panel">
         <div class="panel-bar">
           <div>
-            <h2>对外展示</h2>
-            <p class="bar-hint">左边改还没发布的草稿，右边看效果。发布后的主页从个人中心打开。</p>
+            <h2>社区主页编辑</h2>
+            <p class="bar-hint">左侧改草稿，右侧预览效果。点底部「发布到公开主页」后，访客才会看到最新内容。</p>
           </div>
+          <RouterLink v-if="myCommunity?.slug" class="link" :to="`/communities/${myCommunity.slug}`">
+            查看公开主页
+          </RouterLink>
         </div>
 
         <div class="split">
@@ -643,107 +706,45 @@ onMounted(async () => {
               <tr>
                 <th>姓名</th>
                 <th>邮箱</th>
+                <th class="col-act">操作</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="m in mentors" :key="m.user_id">
                 <td>{{ m.display_name || '—' }}</td>
                 <td>{{ m.email || '—' }}</td>
+                <td class="col-act">
+                  <button
+                    class="btn sm danger"
+                    type="button"
+                    :disabled="busy"
+                    @click="askRemoveMentor(m)"
+                  >
+                    移除
+                  </button>
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
       </section>
 
-      <!-- Tab: 项目 -->
+      <!-- Tab: 项目 — 列表置顶，新建可折叠 -->
       <section v-else-if="tab === 'projects'" class="panel">
-        <div class="project-card">
-          <h2>新建项目</h2>
-          <p class="bar-hint">填完就发布。修改已有项目不会占用这张表。发布后，指定导师的工作台才会出现该任务。</p>
-          <p v-if="!mentors.length" class="bar-hint warn">
-            「{{ myCommunity?.name }}」还没有导师。请先打开「导师」页，用本社区邀请码让导师注册；注册成功后点下方刷新。
-          </p>
-          <p v-else class="bar-hint">可选导师 {{ mentors.length }} 人（仅本社区邀请码注册的导师会出现在这里）。</p>
-          <form class="form proj" @submit.prevent="createProject">
-            <label>
-              负责导师
-              <select v-model="projectForm.mentor_id" required :disabled="!mentors.length">
-                <option disabled value="">{{ mentors.length ? '请选择导师' : '暂无导师' }}</option>
-                <option v-for="m in mentors" :key="m.user_id" :value="m.user_id">
-                  {{ mentorLabel(m) }}
-                </option>
-              </select>
-              <button
-                class="btn sm secondary refresh-mentors"
-                type="button"
-                :disabled="busy"
-                @click="loadMentors"
-              >
-                刷新导师列表
-              </button>
-            </label>
-            <label>标题<input v-model="projectForm.title" required /></label>
-            <label class="full">摘要<input v-model="projectForm.summary" /></label>
-            <label class="full">详情<textarea v-model="projectForm.description" rows="3" /></label>
-            <label>技术栈<input v-model="projectForm.tech_stack" placeholder="用逗号分开" /></label>
-            <label>
-              难度
-              <select v-model="projectForm.difficulty">
-                <option value="easy">基础</option>
-                <option value="medium">进阶</option>
-                <option value="hard">挑战</option>
-              </select>
-            </label>
-            <label>名额<input v-model.number="projectForm.quota" type="number" min="1" /></label>
-            <label>仓库<input v-model="projectForm.repo_url" type="url" /></label>
-            <div class="full acts">
-              <button class="btn" type="submit" :disabled="busy || !mentors.length">发布项目</button>
-            </div>
-          </form>
+        <div class="subh-row">
+          <h3 class="subh">项目列表（{{ orgProjects.length }}）</h3>
+          <button
+            class="btn sm"
+            type="button"
+            :disabled="busy"
+            @click="createFormOpen = !createFormOpen"
+          >
+            {{ createFormOpen ? '收起新建' : '新建项目' }}
+          </button>
         </div>
-
-        <div v-if="previewId" class="project-card edit">
-          <div class="card-head">
-            <div>
-              <h2>{{ previewOffline ? '修改已下架的项目' : '调整项目' }}</h2>
-              <p class="bar-hint">改的是「{{ editForm.title || '当前项目' }}」。新建请用上面那张表。</p>
-            </div>
-            <button class="btn sm secondary" type="button" @click="cancelPreview">收起</button>
-          </div>
-          <form class="form proj" @submit.prevent="savePreview">
-            <label>
-              负责导师
-              <select v-model="editForm.mentor_id" required>
-                <option v-for="m in mentors" :key="m.user_id" :value="m.user_id">
-                  {{ mentorLabel(m) }}
-                </option>
-              </select>
-            </label>
-            <label>标题<input v-model="editForm.title" required /></label>
-            <label class="full">摘要<input v-model="editForm.summary" /></label>
-            <label class="full">详情<textarea v-model="editForm.description" rows="3" /></label>
-            <label>技术栈<input v-model="editForm.tech_stack" placeholder="用逗号分开" /></label>
-            <label>
-              难度
-              <select v-model="editForm.difficulty">
-                <option value="easy">基础</option>
-                <option value="medium">进阶</option>
-                <option value="hard">挑战</option>
-              </select>
-            </label>
-            <label>名额<input v-model.number="editForm.quota" type="number" min="1" /></label>
-            <label>仓库<input v-model="editForm.repo_url" type="url" /></label>
-            <div class="full acts">
-              <button class="btn" type="submit" :disabled="busy">保存修改</button>
-              <button class="btn secondary" type="button" :disabled="busy" @click="publish(previewId)">
-                {{ previewOffline ? '重新发布' : '确认发布' }}
-              </button>
-            </div>
-          </form>
+        <div v-if="!orgProjects.length" class="empty">
+          暂无项目。点右上角「新建项目」发布课题；发布后指定导师的工作台才会出现该任务。
         </div>
-
-        <h3 class="subh">项目列表（{{ orgProjects.length }}）</h3>
-        <div v-if="!orgProjects.length" class="empty">暂无项目</div>
         <div v-else class="scroll tall">
           <table>
             <thead>
@@ -813,12 +814,119 @@ onMounted(async () => {
                     :disabled="busy"
                     @click="publish(p.id)"
                   >
-                    重新发布
+                    保存并发布
                   </button>
                 </td>
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <div v-if="previewId" class="project-card edit">
+          <div class="card-head">
+            <div>
+              <h2>{{ previewOffline ? '修改已下架的项目' : '调整项目' }}</h2>
+              <p class="bar-hint">改的是「{{ editForm.title || '当前项目' }}」。「保存并发布」会先保存当前编辑再上线。</p>
+            </div>
+            <button class="btn sm secondary" type="button" @click="cancelPreview">收起</button>
+          </div>
+          <form class="form proj" @submit.prevent="savePreview">
+            <label>
+              负责导师
+              <select v-model="editForm.mentor_id" required>
+                <option v-for="m in mentors" :key="m.user_id" :value="m.user_id">
+                  {{ mentorLabel(m) }}
+                </option>
+              </select>
+            </label>
+            <label>标题<input v-model="editForm.title" required /></label>
+            <label class="full">摘要<input v-model="editForm.summary" /></label>
+            <label class="full">
+              详情（支持 Markdown）
+              <textarea
+                v-model="editForm.description"
+                rows="14"
+                placeholder="可用 Markdown：## 标题、**加粗**、- 列表 等。"
+              />
+            </label>
+            <p class="full bar-hint">
+              「保存修改」只落库；「保存并发布」会保存当前内容并上线，避免漏保存导致旧详情上线。
+            </p>
+            <label>技术栈<input v-model="editForm.tech_stack" placeholder="用逗号分开" /></label>
+            <label>
+              难度
+              <select v-model="editForm.difficulty">
+                <option value="easy">基础</option>
+                <option value="medium">进阶</option>
+                <option value="hard">挑战</option>
+              </select>
+            </label>
+            <label>名额<input v-model.number="editForm.quota" type="number" min="1" /></label>
+            <label>仓库<input v-model="editForm.repo_url" type="url" /></label>
+            <div class="full acts">
+              <button class="btn secondary" type="submit" :disabled="busy">保存修改</button>
+              <button class="btn" type="button" :disabled="busy" @click="publish(previewId)">
+                保存并发布
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div v-if="createFormOpen" class="project-card">
+          <div class="card-head">
+            <div>
+              <h2>新建项目</h2>
+              <p class="bar-hint">填完即发布。发布后指定导师的工作台才会出现该任务。</p>
+            </div>
+            <button class="btn sm secondary" type="button" @click="createFormOpen = false">收起</button>
+          </div>
+          <p v-if="!mentors.length" class="bar-hint warn">
+            「{{ myCommunity?.name }}」还没有导师。请先打开「导师」页，用本社区邀请码让导师注册。
+          </p>
+          <p v-else class="bar-hint">可选导师 {{ mentors.length }} 人。</p>
+          <form class="form proj" @submit.prevent="createProject">
+            <label>
+              负责导师
+              <select v-model="projectForm.mentor_id" required :disabled="!mentors.length">
+                <option disabled value="">{{ mentors.length ? '请选择导师' : '暂无导师' }}</option>
+                <option v-for="m in mentors" :key="m.user_id" :value="m.user_id">
+                  {{ mentorLabel(m) }}
+                </option>
+              </select>
+              <button
+                class="btn sm secondary refresh-mentors"
+                type="button"
+                :disabled="busy"
+                @click="loadMentors"
+              >
+                刷新导师列表
+              </button>
+            </label>
+            <label>标题<input v-model="projectForm.title" required /></label>
+            <label class="full">摘要<input v-model="projectForm.summary" /></label>
+            <label class="full">
+              详情（支持 Markdown）
+              <textarea
+                v-model="projectForm.description"
+                rows="12"
+                placeholder="可用 Markdown：## 标题、**加粗**、- 列表 等。发布后详情页会按格式展示。"
+              />
+            </label>
+            <label>技术栈<input v-model="projectForm.tech_stack" placeholder="用逗号分开" /></label>
+            <label>
+              难度
+              <select v-model="projectForm.difficulty">
+                <option value="easy">基础</option>
+                <option value="medium">进阶</option>
+                <option value="hard">挑战</option>
+              </select>
+            </label>
+            <label>名额<input v-model.number="projectForm.quota" type="number" min="1" /></label>
+            <label>仓库<input v-model="projectForm.repo_url" type="url" /></label>
+            <div class="full acts">
+              <button class="btn" type="submit" :disabled="busy || !mentors.length">发布项目</button>
+            </div>
+          </form>
         </div>
       </section>
 
@@ -826,21 +934,29 @@ onMounted(async () => {
         <CommunityDesk />
       </section>
 
-      <section v-else-if="tab === 'rewards'" class="panel">
-        <div class="panel-bar">
+      <section v-else-if="tab === 'rewards'" class="panel reward-panel">
+        <div class="reward-hero">
           <div>
-            <h2>学生实习申请</h2>
-            <p class="bar-hint">验收通过后，学生提交实习任务书与 PR/Issue 材料及联系方式。通过后组委会自动计入结项名单；实习认定由社区自行处理。</p>
+            <h2>结项后实习审核</h2>
+            <p>
+              流程：导师验收通过 → 学生提交实习任务书 / PR·Issue 材料与联系方式 → 社区在此审核。通过后组委会自动计入结项名单；实习认定由社区自行处理。
+            </p>
+          </div>
+          <div class="reward-stat">
+            <strong>{{ rewardPendingCount }}</strong>
+            <span>待审核（全部年份）</span>
           </div>
         </div>
         <div class="reward-tools">
-          <input
-            v-model="rewardQuery"
-            type="search"
-            placeholder="搜学生、项目或说明"
-            @keyup.enter="loadRewards"
-          />
-          <button class="btn sm" type="button" @click="loadRewards">搜索</button>
+          <label class="grow">
+            搜索
+            <input
+              v-model="rewardQuery"
+              type="search"
+              placeholder="学生、项目或说明"
+              @keyup.enter="loadRewards"
+            />
+          </label>
           <label>
             年份
             <select v-model="rewardYear" @change="loadRewards">
@@ -857,16 +973,30 @@ onMounted(async () => {
               <option value="all">全部</option>
             </select>
           </label>
+          <button class="btn sm" type="button" :disabled="busy" @click="loadRewards">刷新</button>
         </div>
-        <p v-if="!rewards.length" class="muted">这一栏没有实习申请。</p>
-        <ul v-else class="final-list">
-          <li v-for="item in rewards" :key="item.application_id">
-            <div>
-              <strong>{{ item.student_name || '学生' }}</strong>
-              <span>{{ item.project_title }} · {{ item.created_at || '' }}</span>
-              <p class="reward-body">{{ item.body }}</p>
-              <a v-if="item.attachment_url" :href="withFileAuth(item.attachment_url)" download>{{ item.attachment_name || '实习申请材料.zip' }}</a>
-              <p v-if="item.decision === 'rejected' && item.decision_note" class="reward-note">驳回原因：{{ item.decision_note }}</p>
+        <div v-if="!rewards.length" class="reward-empty">
+          <p>这一栏暂时没有实习申请</p>
+          <span>学生在结项验收通过后，会在这里提交实习材料。</span>
+        </div>
+        <ul v-else class="reward-list">
+          <li v-for="item in rewards" :key="item.application_id" class="reward-card">
+            <div class="reward-main">
+              <div class="reward-title-row">
+                <strong>{{ item.student_name || '学生' }}</strong>
+                <em>{{ item.created_at || '' }}</em>
+              </div>
+              <p class="reward-proj">{{ item.project_title }}</p>
+              <p v-if="item.body" class="reward-body">{{ item.body }}</p>
+              <a
+                v-if="item.attachment_url"
+                class="reward-file"
+                :href="withFileAuth(item.attachment_url)"
+                download
+              >{{ item.attachment_name || '实习申请材料.zip' }}</a>
+              <p v-if="item.decision === 'rejected' && item.decision_note" class="reward-note">
+                驳回原因：{{ item.decision_note }}
+              </p>
             </div>
             <div v-if="item.decision === 'pending' || !item.decision" class="reward-actions">
               <button class="btn sm pass" type="button" :disabled="busy" @click="decideReward(item.application_id, 'approved')">通过</button>
@@ -877,7 +1007,7 @@ onMounted(async () => {
                 <button class="btn sm danger" type="button" :disabled="busy" @click="decideReward(item.application_id, 'rejected')">确认驳回</button>
               </label>
             </div>
-            <strong v-else class="reward-state">{{ item.decision === 'approved' ? '已通过' : '已驳回' }}</strong>
+            <span v-else class="reward-state" :class="item.decision">{{ item.decision === 'approved' ? '已通过' : '已驳回' }}</span>
           </li>
         </ul>
       </section>
@@ -994,13 +1124,130 @@ onMounted(async () => {
   font: inherit;
   resize: vertical;
 }
-.reward-body { white-space: pre-wrap; margin: 0.35rem 0; color: #334155; }
-.reward-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-bottom: 12px; }
-.reward-tools input, .reward-tools select { border: 1px solid #d0d7e2; border-radius: 8px; padding: 6px 8px; font: inherit; }
-.reward-tools label { display: flex; flex-direction: column; gap: 4px; font-size: 0.82rem; color: #475569; }
+.reward-panel { padding-bottom: 8px; }
+.reward-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 4px 2px 14px;
+  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 14px;
+}
+.reward-hero h2 { margin: 0 0 6px; font-size: 1.2rem; color: #1e293b; }
+.reward-hero p { margin: 0; max-width: 46rem; color: #64748b; font-size: 0.88rem; line-height: 1.55; }
+.reward-stat {
+  flex-shrink: 0;
+  min-width: 88px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%);
+  border: 1px solid #dbeafe;
+  text-align: center;
+}
+.reward-stat strong { display: block; font-size: 1.35rem; color: #1d4ed8; line-height: 1.1; }
+.reward-stat span { font-size: 0.75rem; color: #64748b; }
+.reward-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(7rem, 0.7fr) minmax(7rem, 0.7fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+.reward-tools .grow { min-width: 0; }
+.reward-tools input,
+.reward-tools select {
+  border: 1px solid #d0d7e2;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  background: #fff;
+  width: 100%;
+  box-sizing: border-box;
+}
+.reward-tools label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: #64748b;
+  font-weight: 600;
+}
+.reward-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 180px;
+  border: 1px dashed #dbe3f0;
+  border-radius: 14px;
+  background: #f8fafc;
+  color: #94a3b8;
+  text-align: center;
+  padding: 24px;
+}
+.reward-empty p { margin: 0; color: #64748b; font-weight: 600; }
+.reward-empty span { font-size: 0.86rem; }
+.reward-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.reward-card {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 16px 18px;
+  border: 1px solid #e8eef5;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.reward-main { min-width: 0; flex: 1; }
+.reward-title-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.reward-title-row strong { font-size: 1.02rem; color: #0f172a; }
+.reward-title-row em { font-style: normal; color: #94a3b8; font-size: 0.82rem; }
+.reward-proj { margin: 4px 0 0; color: #334155; font-size: 0.9rem; font-weight: 600; }
+.reward-body { white-space: pre-wrap; margin: 0.45rem 0 0; color: #475569; font-size: 0.88rem; line-height: 1.5; }
+.reward-file {
+  display: inline-block;
+  margin-top: 8px;
+  color: #1677ff;
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.reward-file:hover { text-decoration: underline; }
+.reward-note { margin: 8px 0 0; color: #b91c1c; font-size: 0.86rem; }
 .reward-actions { display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 148px; }
 .reward-actions .pass { background: #1677ff; }
 .reward-actions .danger, .reject-box .danger { background: #dc2626; }
+.reward-state {
+  flex-shrink: 0;
+  align-self: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.reward-state.approved { background: #ecfdf5; color: #047857; }
+.reward-state.rejected { background: #fef2f2; color: #b91c1c; }
+@media (max-width: 720px) {
+  .reward-tools { grid-template-columns: 1fr 1fr; }
+  .reward-tools .grow { grid-column: 1 / -1; }
+  .reward-card { flex-direction: column; }
+  .reward-actions { width: 100%; }
+}
 .reject-box { display: flex; flex-direction: column; gap: 6px; }
 .reject-box textarea { width: 220px; border: 1px solid #d0d7e2; border-radius: 8px; padding: 6px 8px; font: inherit; }
 .reward-state { color: #1e3a5f; white-space: nowrap; }
@@ -1283,6 +1530,11 @@ table select {
   font-size: 0.82rem;
   color: #1f2937;
   background: #fff;
+}
+.col-act {
+  width: 5.5rem;
+  text-align: right;
+  white-space: nowrap;
 }
 .project-card {
   border: 1px solid #e8e8e8;

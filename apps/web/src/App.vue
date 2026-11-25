@@ -66,7 +66,7 @@ const avatarUrl = computed(() => withFileAuth(auth.user?.avatar_url) || auth.use
         </span>
         <span class="brand-text">
           <strong>华科大开源实习管理系统</strong>
-          <span>{{ isCommitteeArea ? '组委会通道' : 'HUST OpenAtom' }}</span>
+          <span>{{ isCommitteeArea ? '组委会通道' : 'HUST Open-source Internship Management System' }}</span>
         </span>
       </RouterLink>
 

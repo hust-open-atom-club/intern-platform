@@ -14,6 +14,7 @@ import {
   parseStack,
   projectCode,
 } from '@/utils/projectBrief'
+import { renderMarkdown } from '@/utils/markdown'
 import { resolveCrumbs, seedTrail, getStoredTrail } from '@/utils/crumbTrail'
 
 const route = useRoute()
@@ -45,6 +46,10 @@ const previewTitle = ref('')
 
 const brief = computed(() =>
   parseBrief(project.value?.description, project.value?.summary),
+)
+
+const briefMdHtml = computed(() =>
+  brief.value.markdown ? renderMarkdown(brief.value.markdown) : '',
 )
 
 const langTags = computed(() => {
@@ -407,29 +412,35 @@ watch(() => route.params.id, load)
             </span>
             项目简述
           </h2>
-          <p v-if="project.summary" class="ospp-summary">{{ project.summary }}</p>
-          <div
-            v-for="(sec, idx) in brief.sections || []"
-            :key="sec.title"
-            class="ospp-sec"
-          >
-            <h3>（{{ idx + 1 }}）{{ sec.title }}</h3>
-            <p v-if="sec.body">{{ sec.body }}</p>
-            <ul v-if="sec.items?.length">
-              <li v-for="(it, i) in sec.items" :key="i">{{ it }}</li>
-            </ul>
-          </div>
+          <p v-if="project.summary && !brief.markdown" class="ospp-summary">{{ project.summary }}</p>
+          <div v-if="brief.markdown" class="ospp-md" v-html="briefMdHtml" />
+          <template v-else>
+            <div
+              v-for="(sec, idx) in brief.sections || []"
+              :key="sec.title"
+              class="ospp-sec"
+            >
+              <h3>（{{ idx + 1 }}）{{ sec.title }}</h3>
+              <p v-if="sec.body" class="ospp-sec-body">{{ sec.body }}</p>
+              <ul v-if="sec.items?.length">
+                <li v-for="(it, i) in sec.items" :key="i">{{ it }}</li>
+              </ul>
+            </div>
+          </template>
         </section>
 
-        <!-- 产出 / 技术要求 -->
-        <div class="ospp-cards">
-          <div class="ospp-card">
+        <!-- 产出 / 技术要求（Markdown 详情已自含时不再重复默认卡片） -->
+        <div
+          v-if="(brief.outputs?.length || brief.tech_requirements?.length) && !brief.markdown"
+          class="ospp-cards"
+        >
+          <div v-if="brief.outputs?.length" class="ospp-card">
             <h3>项目产出要求</h3>
             <ul>
               <li v-for="(it, i) in brief.outputs || []" :key="i">{{ it }}</li>
             </ul>
           </div>
-          <div class="ospp-card">
+          <div v-if="brief.tech_requirements?.length" class="ospp-card">
             <h3>项目技术要求</h3>
             <ul>
               <li v-for="(it, i) in brief.tech_requirements || []" :key="i">{{ it }}</li>
@@ -563,6 +574,41 @@ watch(() => route.params.id, load)
 </template>
 
 <style scoped>
+/* 详情 Markdown：挂在组件 CSS，避免只靠全局样式被旧缓存挡住 */
+:deep(.ospp-md) {
+  color: #595959;
+  font-size: 14px;
+  line-height: 1.9;
+  word-break: break-word;
+}
+:deep(.ospp-md h1),
+:deep(.ospp-md h2),
+:deep(.ospp-md h3),
+:deep(.ospp-md h4) {
+  margin: 1.75em 0 0.75em;
+  font-weight: 700;
+  color: #1f2937;
+  line-height: 1.4;
+}
+:deep(.ospp-md h1) { font-size: 1.45rem; }
+:deep(.ospp-md h2) {
+  font-size: 1.28rem;
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid #eef0f3;
+}
+:deep(.ospp-md h3) { font-size: 1.12rem; }
+:deep(.ospp-md p) {
+  margin: 0 0 1.05em;
+  white-space: pre-wrap;
+}
+:deep(.ospp-md ul),
+:deep(.ospp-md ol) {
+  margin: 0 0 1em;
+  padding-left: 1.4em;
+}
+:deep(.ospp-md li + li) { margin-top: 0.45em; }
+:deep(.ospp-md strong) { color: #1f2937; font-weight: 700; }
+
 /* 开源之夏式中选公示条：内容居中 */
 .ospp-selected {
   margin: 0.85rem 0 1.25rem;

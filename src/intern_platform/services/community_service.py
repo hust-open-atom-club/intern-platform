@@ -670,3 +670,125 @@ class CommunityService:
             }
             for user, code in rows
         ]
+
+    def remove_mentor(
+        self,
+        auth: AuthUser,
+        community_id: int,
+        user_id: int,
+        *,
+        self_leave: bool = False,
+        ledger: LedgerRequestContext | None = None,
+    ) -> dict:
+        """解除导师与社区的绑定。组织管理员可移除；导师可主动退出。
+
+        若该导师在本社区仍有负责项目，须先改派/下架，避免 mentor_id 悬空。
+        """
+        from intern_platform.models.project import Project
+        from intern_platform.models.user import User
+        from intern_platform.services.notification_service import NotificationService
+
+        community = self.get(community_id)
+        if community is None:
+            raise LookupError("社区不存在")
+
+        if self_leave:
+            if auth.id != user_id:
+                raise PermissionError("只能退出自己的社区绑定")
+            if not auth.has_community_role("mentor", community_id):
+                raise PermissionError("你不是该社区的导师")
+        else:
+            if not (
+                auth.has_community_role("community_admin", community_id)
+                or auth.has_role("committee")
+            ):
+                raise PermissionError("仅本社区管理员可移除导师")
+
+        mentor_role = self.session.scalar(select(Role).where(Role.code == "mentor"))
+        if mentor_role is None:
+            raise LookupError("系统未配置 mentor 角色")
+
+        link = self.session.scalar(
+            select(UserRole).where(
+                UserRole.user_id == user_id,
+                UserRole.role_id == mentor_role.id,
+                UserRole.community_id == community_id,
+            )
+        )
+        if link is None:
+            raise LookupError("该用户不是本社区导师")
+
+        owned = list(
+            self.session.scalars(
+                select(Project).where(
+                    Project.community_id == community_id,
+                    Project.mentor_id == user_id,
+                )
+            ).all()
+        )
+        if owned:
+            titles = "、".join(p.title for p in owned[:3])
+            more = f" 等 {len(owned)} 个" if len(owned) > 3 else f"（{len(owned)} 个）"
+            raise ValueError(
+                f"该导师仍负责本社区项目：{titles}{more}。"
+                "请先在「项目」中改派其他导师或下架后再操作。"
+            )
+
+        user = self.session.get(User, user_id)
+        display = (user.display_name if user else "") or (user.email if user else f"#{user_id}")
+
+        self.session.delete(link)
+
+        action = "community.mentor_leave" if self_leave else "community.mentor_remove"
+        actor_role = "mentor" if self_leave else "community_admin"
+        AuditLogRepository(self.session).create(
+            actor_id=auth.id,
+            actor_role=actor_role,
+            action=action,
+            resource_type="community",
+            resource_id=community_id,
+            after={"user_id": user_id, "email": user.email if user else None},
+            outcome="SUCCESS",
+            request_id=ledger.request_id if ledger else None,
+            trace_id=ledger.trace_id if ledger else None,
+            ip=ledger.ip if ledger else None,
+            user_agent=ledger.user_agent if ledger else None,
+        )
+
+        notify = NotificationService(self.session)
+        if self_leave:
+            # 通知本社区管理员
+            admin_role = self.session.scalar(
+                select(Role).where(Role.code == "community_admin")
+            )
+            if admin_role is not None:
+                admin_ids = list(
+                    self.session.scalars(
+                        select(UserRole.user_id).where(
+                            UserRole.role_id == admin_role.id,
+                            UserRole.community_id == community_id,
+                        )
+                    ).all()
+                )
+                for aid in admin_ids:
+                    notify.create(
+                        user_id=aid,
+                        title=f"导师已退出「{community.name}」",
+                        body=f"{display} 主动退出了本社区。",
+                        kind="community_mentor",
+                    )
+        else:
+            notify.create(
+                user_id=user_id,
+                title=f"已从「{community.name}」移除",
+                body="社区管理员已解除你的导师身份。如需再次加入，请使用邀请码重新注册/加入。",
+                kind="community_mentor",
+            )
+
+        self.session.commit()
+        return {
+            "user_id": user_id,
+            "community_id": community_id,
+            "community_name": community.name,
+            "left": True,
+        }

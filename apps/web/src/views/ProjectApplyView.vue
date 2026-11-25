@@ -21,6 +21,7 @@ const submitting = ref(false)
 const blocked = ref('')
 const hold = ref('')
 
+const realName = ref('')
 const statement = ref('')
 const resumeFile = ref<File | null>(null)
 const designFile = ref<File | null>(null)
@@ -85,6 +86,12 @@ async function uploadPdf(file: File): Promise<string> {
 async function apply() {
   if (hold.value) return
   applyError.value = ''
+  const name = realName.value.trim()
+  if (!name) {
+    applyError.value = '请填写真实姓名，导师审核时会看到这个名字'
+    toast.value?.show(applyError.value, 'err')
+    return
+  }
   if (!resumeFile.value || !designFile.value) {
     applyError.value = '请上传个人简历 PDF 与项目设计 PDF'
     toast.value?.show(applyError.value, 'err')
@@ -102,7 +109,7 @@ async function apply() {
     const { data } = await api.post<ApplicationOut>(`/projects/${projectId.value}/applications`, {
       statement: statement.value || null,
       attachment_url: resumeUrl,
-      extra_fields: { resume_pdf: resumeUrl, design_pdf: designUrl },
+      extra_fields: { real_name: name, resume_pdf: resumeUrl, design_pdf: designUrl },
       submit: submitNow.value,
     })
     toast.value?.show('申请提交成功', 'ok')
@@ -132,6 +139,10 @@ onMounted(load)
         <p class="title">{{ project.title }}</p>
         <p class="tip">提交后进入导师 → 社区 → 组委会三级审核。附件统一为 PDF。</p>
       </header>
+      <label class="real-name">
+        真实姓名 <span>必填，导师与社区将看到此姓名</span>
+        <input v-model="realName" type="text" required maxlength="64" placeholder="请填写证件或学籍上的真实姓名" autocomplete="name" />
+      </label>
       <div class="cols">
         <label>
           申请陈述 <span>选填</span>
@@ -164,6 +175,9 @@ onMounted(load)
 h1 { margin: 0.2rem 0 0.35rem; color: #1e3a5f; font-size: 1.6rem; }
 .title { margin: 0; color: #1e3a5f; font-weight: 700; }
 .tip { margin: 0.45rem 0 0; color: #64748b; }
+.real-name { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; color: #1e3a5f; font-weight: 600; max-width: 28rem; }
+.real-name span { font-weight: 400; color: #8c8c8c; }
+.real-name input { border: 1px solid #d0d7e2; border-radius: 10px; padding: 10px 12px; font: inherit; font-weight: 400; }
 .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; margin-top: 18px; }
 label { display: flex; flex-direction: column; gap: 8px; color: #1e3a5f; font-weight: 600; }
 label span { font-weight: 400; color: #8c8c8c; }

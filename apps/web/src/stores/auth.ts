@@ -3,6 +3,9 @@ import { computed, ref } from 'vue'
 import api, { getStoredToken, isOpsPath, setStoredToken } from '@/api/client'
 import type { UserOut } from '@/api/types'
 
+const PUBLIC_TOKEN_KEY = 'intern_platform_token'
+const OPS_TOKEN_KEY = 'intern_platform_ops_token'
+
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(getStoredToken())
   const user = ref<UserOut | null>(null)
@@ -150,6 +153,18 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = accessToken
     setStoredToken(accessToken, scope)
     user.value = nextUser
+  }
+
+  /** 其它标签页登录/退出时同步本页会话 */
+  if (typeof window !== 'undefined') {
+    window.addEventListener('storage', (ev) => {
+      if (ev.key !== PUBLIC_TOKEN_KEY && ev.key !== OPS_TOKEN_KEY) return
+      const next = getStoredToken()
+      if (next === token.value) return
+      token.value = next
+      user.value = null
+      if (next) void fetchMe()
+    })
   }
 
   return {

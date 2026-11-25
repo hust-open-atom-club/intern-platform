@@ -121,6 +121,13 @@ class ApplicationService:
             owner_user_id=auth.id,
         )
         if body.submit:
+            real_name = str((safe_extra or {}).get("real_name") or "").strip()
+            if not real_name:
+                raise ValueError("请填写真实姓名，便于导师识别")
+            if len(real_name) > 64:
+                raise ValueError("真实姓名过长")
+            safe_extra = dict(safe_extra or {})
+            safe_extra["real_name"] = real_name
             validate_extra_fields(
                 ext.application_schema if ext else None, safe_extra
             )

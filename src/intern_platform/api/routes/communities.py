@@ -199,6 +199,47 @@ def list_community_members(
     return [CommunityMemberOut.model_validate(r) for r in rows]
 
 
+@router.delete("/{community_id:int}/members/{user_id:int}")
+def remove_community_mentor(
+    community_id: int,
+    user_id: int,
+    auth: AuthUser = Depends(require_roles("community_admin", "committee")),
+    db: Session = Depends(get_db),
+    ledger: LedgerRequestContext = Depends(get_ledger_context),
+) -> dict:
+    """社区管理员移除导师（解除本社区 mentor 绑定）。"""
+    try:
+        return CommunityService(db).remove_mentor(
+            auth, community_id, user_id, self_leave=False, ledger=ledger
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{community_id:int}/leave")
+def leave_community(
+    community_id: int,
+    auth: AuthUser = Depends(require_roles("mentor")),
+    db: Session = Depends(get_db),
+    ledger: LedgerRequestContext = Depends(get_ledger_context),
+) -> dict:
+    """导师主动退出社区。"""
+    try:
+        return CommunityService(db).remove_mentor(
+            auth, community_id, auth.id, self_leave=True, ledger=ledger
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/{community_id}/extension", response_model=ExtensionOut)
 def get_extension(
     community_id: int,

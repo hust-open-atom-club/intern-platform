@@ -71,7 +71,7 @@ INTEGRATION_DEFAULTS = {
     "portal.home_url": "https://hust.openatom.club/",
     "portal.docs_url": "https://github.com/hust-open-atom-club/docs",
     "portal.join_guide_url": "https://hust.openatom.club/",
-    "gitea.base_url": "https://git.hust.openatom.club/",
+    "gitea.base_url": "https://git.hust.edu.cn",
     "mirror.home_url": "https://mirrors.hust.edu.cn/",
     "auth.provider": "local",
     "db.note": "sqlite-default",

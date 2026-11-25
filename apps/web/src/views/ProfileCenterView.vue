@@ -487,9 +487,9 @@ function consumeBindResult() {
                 <p>登录邮箱由组委会发放。密码可在左侧「修改密码」自行更换；对外资料在组织工作台编辑并发布。</p>
               </div>
               <div class="me-banner-ops">
-                <RouterLink v-if="orgCommunity" class="primary" :to="`/communities/${orgCommunity.slug}`">公开主页</RouterLink>
+                <RouterLink v-if="orgCommunity" class="primary" :to="`/communities/${orgCommunity.slug}`">查看公开主页</RouterLink>
                 <button type="button" class="ghost" @click="setTab('password')">修改密码</button>
-                <RouterLink class="ghost" to="/org">去编辑</RouterLink>
+                <RouterLink class="ghost" to="/org?tab=home">编辑社区主页</RouterLink>
               </div>
             </div>
           </section>
@@ -544,7 +544,7 @@ function consumeBindResult() {
             <article class="card wide">
               <header>
                 <h2>项目</h2>
-                <RouterLink class="more" to="/org">管理</RouterLink>
+                <RouterLink class="more" to="/org?tab=projects">管理项目</RouterLink>
               </header>
               <p v-if="!orgProjects.length" class="empty">还没有项目。创建和分配导师在组织工作台完成。</p>
               <div v-else class="mentor-proj">

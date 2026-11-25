@@ -1881,7 +1881,7 @@ onMounted(load)
         <div class="topnav-inner">
           <span class="brand">
             <img src="/logos/penguin-blue.svg" alt="" />
-            <span><strong>华科大开源实习管理系统</strong><small>HUST OpenAtom</small></span>
+            <span><strong>华科大开源实习管理系统</strong><small>HUST Open-source Internship Management System</small></span>
           </span>
           <nav>
             <span>首页</span><span>查看项目</span><span>结项公示</span><span>最新动态</span><span>参与指南</span>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import api from '@/api/client'
 import type { PortalLinksOut } from '@/api/types'
@@ -35,7 +35,7 @@ const services = [
   },
   {
     key: 'gitea_url' as const,
-    title: 'Gitea 代码托管平台',
+    title: 'Gitlab 代码托管平台',
     desc: '代码管理、Issue 与 PR，服务结项核验',
     icon: 'git',
   },
@@ -47,7 +47,7 @@ const services = [
   },
   {
     key: 'join_guide_url' as const,
-    title: '加入我们',
+    title: '加入华科大开源俱乐部',
     desc: 'PR 贡献 → 信息表 → 加入 GitHub 组织',
     icon: 'join',
   },
@@ -55,20 +55,12 @@ const services = [
 
 const processSteps = [
   { n: '01', title: '社区报名与审核', desc: '社区提交资料，组委会准入', kind: 'org' },
-  { n: '02', title: '发布实习项目', desc: '导师发布课题并上线', kind: 'org' },
-  { n: '03', title: '学生项目申请', desc: '浏览项目并提交申请书', kind: 'stu' },
-  { n: '04', title: '三级审核', desc: '导师 → 社区 → 组委会', kind: 'stu' },
-  { n: '05', title: '中选公示', desc: '结果公开，进入开发', kind: 'stu' },
-  { n: '06', title: '结项审核与公示', desc: 'PR/报告双审后公示', kind: 'stu' },
+  { n: '02', title: '发布实习项目', desc: '社区创建课题并指定导师', kind: 'org' },
+  { n: '03', title: '学生实名申请', desc: '填写真实姓名并提交申请书', kind: 'stu' },
+  { n: '04', title: '导师审核中选', desc: '导师通过后即预留名额、进入开发', kind: 'stu' },
+  { n: '05', title: '进展与结项', desc: '更新进展，提交验收材料', kind: 'stu' },
+  { n: '06', title: '实习认定', desc: '向社区提交实习申请，通过后计入结项名单', kind: 'stu' },
 ]
-
-const track = ref<HTMLElement | null>(null)
-
-function scrollTrack(dir: 1 | -1) {
-  const el = track.value
-  if (!el) return
-  el.scrollBy({ left: dir * 280, behavior: 'smooth' })
-}
 </script>
 
 <template>
@@ -100,23 +92,19 @@ function scrollTrack(dir: 1 | -1) {
       <div class="section-head">
         <h2>活动流程</h2>
         <div class="accent-line" />
-        <p>可左右滑动查看完整流程</p>
+        <p>从社区准入到实习认定，六步一览</p>
       </div>
-      <div class="h-scroll-wrap">
-        <button class="h-scroll-btn" type="button" aria-label="向左" @click="scrollTrack(-1)">‹</button>
-        <div ref="track" class="process-track h-scroll">
-          <div
-            v-for="s in processSteps"
-            :key="s.n"
-            class="process-step"
-            :class="s.kind"
-          >
-            <div class="num">{{ s.n }}</div>
-            <h3>{{ s.title }}</h3>
-            <p>{{ s.desc }}</p>
-          </div>
+      <div class="process-track process-grid-2x3">
+        <div
+          v-for="s in processSteps"
+          :key="s.n"
+          class="process-step"
+          :class="s.kind"
+        >
+          <div class="num">{{ s.n }}</div>
+          <h3>{{ s.title }}</h3>
+          <p>{{ s.desc }}</p>
         </div>
-        <button class="h-scroll-btn" type="button" aria-label="向右" @click="scrollTrack(1)">›</button>
       </div>
     </section>
 

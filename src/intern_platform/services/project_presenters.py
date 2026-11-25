@@ -50,10 +50,14 @@ def seat_taken_count(session: Session, project_id: int) -> int:
 
 
 def _row_to_assignee(a: Application, *, kind: str) -> ProjectAssigneeOut:
+    from intern_platform.services.application_presenters import application_real_name
+
+    real = application_real_name(a)
+    fallback = a.student.display_name if a.student else None
     return ProjectAssigneeOut(
         application_id=a.id,
         student_id=a.student_id,
-        student_name=(a.student.display_name if a.student else None),
+        student_name=real or fallback,
         status=a.status,
         kind=kind,
     )

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import api from '@/api/client'
 
 type DocKey = 'faq' | 'org' | 'student' | 'mentor' | 'flow'
@@ -16,8 +16,6 @@ const activeDoc = ref<DocKey | null>(null)
 const activeId = ref('')
 const showTop = ref(false)
 const helpTrack = ref<HTMLElement | null>(null)
-const historyPaused = ref(false)
-const historyReverse = ref(false)
 const detailRef = ref<HTMLElement | null>(null)
 
 const helpDocs: {
@@ -96,29 +94,12 @@ const docMeta: Record<
   },
 }
 
-const historyYears = [
-  { year: '2025', note: '开源之夏', tone: 0 },
-  { year: '2024', note: '开源之夏', tone: 1 },
-  { year: '2023', note: '开源之夏', tone: 2 },
-  { year: '2022', note: '开源之夏', tone: 0 },
-  { year: '2021', note: '开源之夏', tone: 1 },
-  { year: '2020', note: '开源之夏', tone: 2 },
-]
-const historyLoop = [...historyYears, ...historyYears]
-
 const currentToc = computed(() => (activeDoc.value ? docMeta[activeDoc.value].toc : []))
 const currentTitle = computed(() => (activeDoc.value ? docMeta[activeDoc.value].title : ''))
 
 function scrollRail(el: HTMLElement | null, dir: 1 | -1) {
   if (!el) return
   el.scrollBy({ left: dir * 280, behavior: 'smooth' })
-}
-
-function nudgeHistory(dir: 1 | -1) {
-  historyReverse.value = dir < 0
-  window.setTimeout(() => {
-    historyReverse.value = false
-  }, 2500)
 }
 
 function cardLook(key: string) {
@@ -220,7 +201,7 @@ onMounted(async () => {
     )
     if (books.length) {
       remoteBooks.value = books
-      remoteBook.value = ''
+      remoteBook.value = books[0]?.key || ''
       useRemote.value = true
     }
   } catch {
@@ -229,7 +210,11 @@ onMounted(async () => {
   await nextTick()
   const hash = route.hash.replace('#', '')
   const mapped = hashToDoc[hash]
-  if (mapped) await openDoc(mapped)
+  if (mapped) {
+    await openDoc(mapped)
+  } else if (!useRemote.value) {
+    await openDoc('faq')
+  }
   onScroll()
 })
 
@@ -279,6 +264,59 @@ onUnmounted(() => {
       </div>
     </section>
 
+    <section v-if="!useRemote" class="guide-help-section">
+      <h2>帮助文档</h2>
+      <p class="help-hint">请先选择下方卡片，再查看对应详细说明</p>
+      <div class="help-grid-wrap">
+        <button class="h-scroll-btn help-nav-btn" type="button" aria-label="向左" @click="scrollRail(helpTrack, -1)">‹</button>
+        <div ref="helpTrack" class="help-rail">
+          <button
+            v-for="d in helpDocs"
+            :key="d.key"
+            type="button"
+            class="help-card"
+            :class="[d.tone, { selected: activeDoc === d.key }]"
+            @click="openDoc(d.key)"
+          >
+            <span class="help-icon">{{ d.icon }}</span>
+            <strong>{{ d.title }}</strong>
+            <span>{{ d.desc }}</span>
+            <em class="help-cta">点击查看详情 →</em>
+          </button>
+        </div>
+        <button class="h-scroll-btn help-nav-btn" type="button" aria-label="向右" @click="scrollRail(helpTrack, 1)">›</button>
+      </div>
+    </section>
+
+    <section class="guide-start-section" aria-label="快速开始">
+      <div class="guide-start-inner">
+        <h2>快速开始</h2>
+        <p class="help-hint">按角色进入对应入口；上方卡片可展开完整说明</p>
+        <div class="guide-start-grid">
+          <RouterLink class="guide-start-card stu" to="/login?role=student">
+            <strong>学生</strong>
+            <span>注册登录后浏览课题、提交申请，跟踪三级审核与结项。</span>
+            <em>去学生入口 →</em>
+          </RouterLink>
+          <RouterLink class="guide-start-card mentor" to="/login?role=mentor">
+            <strong>导师</strong>
+            <span>使用社区邀请码注册，审核申请、跟进进展并验收结项。</span>
+            <em>去导师入口 →</em>
+          </RouterLink>
+          <RouterLink class="guide-start-card org" to="/login?role=org">
+            <strong>组织</strong>
+            <span>由组委会开通账号，维护主页、邀请导师并发布项目。</span>
+            <em>去组织入口 →</em>
+          </RouterLink>
+          <RouterLink class="guide-start-card projects" to="/projects">
+            <strong>查看项目</strong>
+            <span>先看俱乐部与 GTOC 课题；确认方向后再登录申请。</span>
+            <em>浏览课题 →</em>
+          </RouterLink>
+        </div>
+      </div>
+    </section>
+
     <div v-if="useRemote && remoteBook" class="guide-detail-wrap">
       <div class="guide-detail-bar">
         <h2>{{ remoteBooks.find((book) => book.key === remoteBook)?.title }}</h2>
@@ -321,30 +359,6 @@ onUnmounted(() => {
         </aside>
       </div>
     </div>
-
-    <section v-if="!useRemote" class="guide-help-section">
-      <h2>帮助文档</h2>
-      <p class="help-hint">请先选择下方卡片，再查看对应详细说明</p>
-      <div class="help-grid-wrap">
-        <button class="h-scroll-btn help-nav-btn" type="button" aria-label="向左" @click="scrollRail(helpTrack, -1)">‹</button>
-        <div ref="helpTrack" class="help-rail">
-          <button
-            v-for="d in helpDocs"
-            :key="d.key"
-            type="button"
-            class="help-card"
-            :class="[d.tone, { selected: activeDoc === d.key }]"
-            @click="openDoc(d.key)"
-          >
-            <span class="help-icon">{{ d.icon }}</span>
-            <strong>{{ d.title }}</strong>
-            <span>{{ d.desc }}</span>
-            <em class="help-cta">点击查看详情 →</em>
-          </button>
-        </div>
-        <button class="h-scroll-btn help-nav-btn" type="button" aria-label="向右" @click="scrollRail(helpTrack, 1)">›</button>
-      </div>
-    </section>
 
     <!-- 仅点击卡片后展开详情 -->
     <div v-if="activeDoc && !useRemote" ref="detailRef" class="guide-detail-wrap">
@@ -844,36 +858,6 @@ onUnmounted(() => {
         </aside>
       </div>
     </div>
-
-    <section class="history-section">
-      <h2>往届回顾</h2>
-      <p class="history-sub">开源之夏历年活动回顾（展示用，链接指向 OSPP 官网）</p>
-      <div class="history-wrap">
-        <button class="h-scroll-btn light history-arrow" type="button" aria-label="短暂向右" @click="nudgeHistory(-1)">‹</button>
-        <div
-          class="history-marquee"
-          :class="{ paused: historyPaused, reverse: historyReverse }"
-          @mouseenter="historyPaused = true"
-          @mouseleave="historyPaused = false"
-        >
-          <div class="history-marquee-track">
-            <a
-              v-for="(h, i) in historyLoop"
-              :key="`${h.year}-${i}`"
-              class="history-card"
-              :class="`tone-${h.tone}`"
-              href="https://summer.ospp.ac.cn/"
-              target="_blank"
-              rel="noopener"
-            >
-              <div class="history-art" />
-              <div class="history-bar">{{ h.note }} {{ h.year }}</div>
-            </a>
-          </div>
-        </div>
-        <button class="h-scroll-btn light history-arrow" type="button" aria-label="继续向左" @click="nudgeHistory(1)">›</button>
-      </div>
-    </section>
 
     <div class="fab-stack">
       <button class="fab" type="button" title="分享" @click="sharePage">

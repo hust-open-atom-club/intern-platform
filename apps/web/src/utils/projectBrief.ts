@@ -1,5 +1,7 @@
 /** Parse OSPP-style structured brief stored in project.description (JSON) or fall back. */
 
+import { normalizeMarkdown } from '@/utils/markdown'
+
 export type BriefSection = {
   title: string
   body?: string
@@ -16,6 +18,8 @@ export type ProjectBrief = {
   mentor_name?: string
   mentor_email?: string
   heat?: number
+  /** Free-form Markdown body (when description is not JSON brief). */
+  markdown?: string
   sections?: BriefSection[]
   outputs?: string[]
   tech_requirements?: string[]
@@ -50,11 +54,18 @@ export function parseBrief(description?: string | null, summary?: string | null)
     }
   }
 
-  const text = description?.trim() || summary?.trim() || ''
+  // 非 JSON 的详情一律当 Markdown/纯文本渲染，避免再塞进「背景介绍」挤成一段
+  const text = normalizeMarkdown(description || '') || summary?.trim() || ''
+  if (text) {
+    return {
+      markdown: text,
+      sections: [],
+      outputs: [],
+      tech_requirements: [],
+    }
+  }
   return {
-    sections: text
-      ? [{ title: '背景介绍', body: text }]
-      : [{ title: '背景介绍', body: '导师尚未填写详细任务说明。' }],
+    sections: [{ title: '背景介绍', body: '导师尚未填写详细任务说明。' }],
     outputs: ['完成课题约定的代码 / 文档产出，并以 PR/MR 形式提交', '提交结项报告，说明目标、工作与结果'],
     tech_requirements: ['具备相关技术栈基础，能独立完成开发与联调', '熟悉 Git 协作与 Code Review 流程'],
   }
