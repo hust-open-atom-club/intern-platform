@@ -172,8 +172,8 @@ defineExpose({ refresh: load })
 
       <div v-if="tab === 'notify'" class="notify-body">
         <div class="notify-toolbar">
-          <span class="muted">审核结果、最新动态和结项公示会出现在这里</span>
-          <button v-if="hasUnread" class="linkish" type="button" @click="markAll">全部已读</button>
+          <span class="muted">审核结果、动态与公示会显示在这里</span>
+          <button v-if="hasUnread" class="linkish mark-all" type="button" @click="markAll">全部已读</button>
         </div>
         <p v-if="loading" class="muted pad">加载中…</p>
         <p v-else-if="!notes.length" class="muted pad">暂无通知</p>
