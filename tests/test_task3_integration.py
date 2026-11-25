@@ -58,9 +58,8 @@ def test_full_path_draft_to_completed_writes_ledger(client_and_db) -> None:
         assert resp.status_code == 200, resp.text
         return resp.json()
 
-    review(mentor)
-    # 社区通过后组委会自动接收中选，不必再审一次
-    selected = review(admin)
+    # 导师通过后自动过社区/组委会节点，直接中选（组织端不再单独审核）
+    selected = review(mentor)
     assert selected["to_status"] == "selected"
 
     r = client.post(

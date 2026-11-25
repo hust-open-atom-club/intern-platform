@@ -273,7 +273,7 @@ def test_rejected_application_can_reapply(client_and_db) -> None:
         json={
             "statement": "second try after reject",
             "submit": True,
-            "extra_fields": {},
+            "extra_fields": {"real_name": "回归测试生"},
         },
     )
     assert r.status_code in (200, 201), r.text

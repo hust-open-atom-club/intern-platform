@@ -226,7 +226,11 @@ def test_pdf_upload_and_apply(client_and_db) -> None:
         json={
             "statement": "ci apply with pdfs",
             "attachment_url": resume_url,
-            "extra_fields": {"resume_pdf": resume_url, "design_pdf": design_url},
+            "extra_fields": {
+                "real_name": "测试学生甲",
+                "resume_pdf": resume_url,
+                "design_pdf": design_url,
+            },
             "submit": True,
         },
     )
@@ -242,7 +246,7 @@ def test_pdf_upload_and_apply(client_and_db) -> None:
     row = next(a for a in inbox.json() if a["id"] == body["id"])
     assert row["resume_pdf"] == resume_url
     assert row["design_pdf"] == design_url
-    assert row.get("student_name")
+    assert row.get("student_name") == "测试学生甲"
 
     reject = client.post(
         f"/api/v1/applications/{body['id']}/reviews",
@@ -259,7 +263,11 @@ def test_pdf_upload_and_apply(client_and_db) -> None:
         json={
             "statement": "reapply after reject",
             "attachment_url": resume_url,
-            "extra_fields": {"resume_pdf": resume_url, "design_pdf": design_url},
+            "extra_fields": {
+                "real_name": "测试学生甲",
+                "resume_pdf": resume_url,
+                "design_pdf": design_url,
+            },
             "submit": True,
         },
     )
@@ -300,11 +308,12 @@ def test_apply_without_pdfs_rejected(client_and_db) -> None:
         headers={**_auth(token), "X-Idempotency-Key": _idem()},
         json={
             "statement": "missing pdfs",
-            "extra_fields": {},
+            "extra_fields": {"real_name": "测试学生乙"},
             "submit": True,
         },
     )
     assert r.status_code == 400
+    assert "PDF" in r.text or "简历" in r.text or "设计" in r.text or "pdf" in r.text.lower()
 
 
 def test_org_settle_approve_join_and_mine(client_and_db) -> None:
