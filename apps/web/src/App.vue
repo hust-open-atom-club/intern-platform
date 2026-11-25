@@ -171,11 +171,11 @@ const avatarUrl = computed(() => withFileAuth(auth.user?.avatar_url) || auth.use
           <strong>华科开放原子开源俱乐部 · 开源实习</strong>
           <span>服务俱乐部多社区运营与开源贡献管理</span>
         </div>
-        <div class="stack" style="gap: 0.35rem">
+        <nav class="footer-links" aria-label="页脚链接">
           <RouterLink to="/guide">参与指南</RouterLink>
           <RouterLink to="/news">最新动态</RouterLink>
           <a href="https://hust.openatom.club/" target="_blank" rel="noopener">俱乐部官网</a>
-        </div>
+        </nav>
       </div>
     </footer>
   </div>

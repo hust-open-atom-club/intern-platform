@@ -2826,9 +2826,17 @@ textarea {
   margin-bottom: 0.35rem;
 }
 
+.footer-links {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem 1.5rem;
+}
+
 .site-footer a {
   color: rgba(255, 255, 255, 0.7);
-  font-size: 0.85rem;
+  font-size: 1rem;
 }
 
 .site-footer a:hover {
