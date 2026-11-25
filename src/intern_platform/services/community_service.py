@@ -46,11 +46,25 @@ class CommunityService:
         self.audits = AuditLogRepository(session)
         self.events = WorkflowEventRepository(session)
 
+    # 公开列表置顶：俱乐部 → GTOC → 其余按 id
+    _PINNED_SLUGS = ("hust", "gtoc")
+
+    @classmethod
+    def _public_sort_key(cls, community: Community) -> tuple[int, int]:
+        slug = (community.slug or "").lower()
+        try:
+            pin = cls._PINNED_SLUGS.index(slug)
+        except ValueError:
+            pin = 1000
+        return (pin, community.id)
+
     def list_communities(self, status: str | None = None) -> list[Community]:
         stmt = select(Community).order_by(Community.id.asc())
         if status:
             stmt = stmt.where(Community.status == status)
-        return list(self.session.scalars(stmt).all())
+        rows = list(self.session.scalars(stmt).all())
+        rows.sort(key=self._public_sort_key)
+        return rows
 
     def get_by_slug(self, slug: str) -> Community | None:
         return self.session.scalar(select(Community).where(Community.slug == slug))

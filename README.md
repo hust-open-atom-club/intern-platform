@@ -5,9 +5,11 @@
 ## 使用与反馈
 
 - **使用地址**：https://intern.openatom.club  
+- **使用手册**（按角色分册 + 截图步骤）：[docs/使用文档/README.md](docs/使用文档/README.md)（[索引兼容旧链接](docs/使用文档/平台使用手册.md)）  
 - **问题收集**（飞书）：https://ccnz793r59f8.feishu.cn/base/B20BbSPspaHnsrsnTNpcjnNDn9f?from=from_copylink  
+- **GitHub Issue**：https://github.com/hust-open-atom-club/intern-platform/issues/new/choose  
 
-使用中遇到问题或改进建议，请填到飞书表格里。
+使用中遇到问题或改进建议，请填飞书表格或按 Issue 模板提交。
 
 ## 技术栈
 

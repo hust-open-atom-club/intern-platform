@@ -79,15 +79,27 @@ function initialOf(name: string) {
   return s.slice(0, 1)
 }
 
+/** 公开社区列表置顶：俱乐部 → GTOC → 其余 */
+const PINNED_ORG_SLUGS = ['hust', 'gtoc']
+
 const filteredOrgs = computed(() => {
   const q = orgQuery.value.trim().toLowerCase()
-  return communities.value.filter((c) => {
-    // 隐藏自动化冒烟组织，避免冲淡演示案例
-    if ((c.slug || '').startsWith('smoke-')) return false
-    if (!q) return true
-    const hay = `${c.name} ${c.description || ''} ${c.slug}`.toLowerCase()
-    return hay.includes(q)
-  })
+  return communities.value
+    .filter((c) => {
+      // 隐藏自动化冒烟组织，避免冲淡演示案例
+      if ((c.slug || '').startsWith('smoke-')) return false
+      if (!q) return true
+      const hay = `${c.name} ${c.description || ''} ${c.slug}`.toLowerCase()
+      return hay.includes(q)
+    })
+    .sort((a, b) => {
+      const ia = PINNED_ORG_SLUGS.indexOf((a.slug || '').toLowerCase())
+      const ib = PINNED_ORG_SLUGS.indexOf((b.slug || '').toLowerCase())
+      const pa = ia === -1 ? 999 : ia
+      const pb = ib === -1 ? 999 : ib
+      if (pa !== pb) return pa - pb
+      return a.id - b.id
+    })
 })
 
 const communityMap = computed(() => {
