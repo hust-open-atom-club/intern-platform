@@ -75,18 +75,21 @@ async function confirmCloseTake() {
         <p class="eyebrow">导师工作台</p>
         <h1 class="page-title">我负责的项目</h1>
         <p class="muted">
-          这里只列出<strong>组织指派给你</strong>的项目。新建与改派请由社区管理员在
-          <RouterLink to="/org">组织工作台</RouterLink> 操作。
+          这里只列出<strong>组织指派给你</strong>的项目。导师不能自行进组织工作台建题；需要新课题或改派时，请通过工作台「社区对接」联系管理员，或线下向社区管理员说明。
         </p>
       </div>
-      <RouterLink class="btn secondary" to="/mentor">← 返回待审申请</RouterLink>
+      <RouterLink class="btn secondary" to="/mentor">← 返回导师工作台</RouterLink>
     </header>
 
     <p v-if="error" class="error">{{ error }}</p>
 
     <div v-if="!projects.length" class="empty card">
       <p>暂无指派给你的项目。</p>
-      <p class="muted">请联系社区管理员创建项目并指定你为负责导师。</p>
+      <p class="muted">请联系社区管理员创建项目并指定你为负责导师；也可打开「社区对接」与管理员沟通。</p>
+      <div class="btn-row">
+        <RouterLink class="btn sm" to="/mentor">去工作台</RouterLink>
+        <RouterLink class="btn secondary sm" to="/guide#doc-mentor">导师指南</RouterLink>
+      </div>
     </div>
 
     <div v-else class="proj-grid">

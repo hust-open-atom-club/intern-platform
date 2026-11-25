@@ -40,11 +40,29 @@ const showHistory = ref(false)
 const comment = ref('')
 const busy = ref(false)
 const loading = ref(true)
+const detailLoading = ref(false)
 const error = ref('')
 const confirmOpen = ref(false)
 const pending = ref<'approve' | 'reject' | null>(null)
 const leaveOpen = ref(false)
 const leaveTargetId = ref(0)
+/** 切换学生时递增，丢弃过期详情响应，避免串材料 */
+let detailSeq = 0
+
+const DESK_ACTIVE = new Set([
+  'submitted',
+  'mentor_review',
+  'community_review',
+  'committee_review',
+  'selected',
+  'in_progress',
+  'final_submitted',
+  'mentor_final_review',
+  'community_final_review',
+  'committee_final_review',
+  'final_rejected',
+  'rejected',
+])
 
 const preferTab = ref<WorkTab | null>(null)
 const pickedProjectId = ref(0)
@@ -141,13 +159,29 @@ function jobLabel(a: ApplicationOut) {
 
 const projectOptions = computed(() =>
   projects.value
-    .filter((owned) => owned.status === 'published')
+    .filter((owned) => {
+      if (owned.status === 'published') return true
+      // 已关闭接取但仍有开发/验收中学生时，工作台仍要能选到
+      return rows.value.some(
+        (row) => row.project_id === owned.id && DESK_ACTIVE.has(row.status),
+      )
+    })
     .map((owned) => ({
       id: owned.id,
       title: owned.title,
       quota: owned.quota || 0,
       taken: owned.seats_taken || 0,
+      closed: owned.status !== 'published',
     })),
+)
+
+const hasAssignedProjects = computed(() => projectOptions.value.length > 0)
+
+const detailReady = computed(
+  () =>
+    !!selectedId.value &&
+    !detailLoading.value &&
+    detail.value?.id === selectedId.value,
 )
 
 const inProject = computed(() =>
@@ -321,18 +355,29 @@ async function ackUpdate(row: ApplicationOut) {
 }
 
 async function loadDetail(id: number) {
-  const { data } = await api.get<ApplicationOut>(`/applications/${id}`)
-  detail.value = data
-  const { data: msgs } = await api.get<MessageOut[]>(`/applications/${id}/messages`)
-  logs.value = msgs
-  docTab.value = data.design_pdf ? 'design' : 'resume'
-  workTab.value = preferTab.value || defaultWork(data.status)
-  preferTab.value = null
-  showHistory.value = false
+  const seq = ++detailSeq
+  detailLoading.value = true
+  // 先清空，避免左侧已切人、右侧仍显示上一份材料
+  detail.value = null
+  logs.value = []
   comment.value = ''
   advice.value = ''
-  progressHistoryShown.value = HISTORY_PAGE
-  acceptanceHistoryShown.value = HISTORY_PAGE
+  showHistory.value = false
+  try {
+    const { data } = await api.get<ApplicationOut>(`/applications/${id}`)
+    if (seq !== detailSeq || selectedId.value !== id) return
+    const { data: msgs } = await api.get<MessageOut[]>(`/applications/${id}/messages`)
+    if (seq !== detailSeq || selectedId.value !== id) return
+    detail.value = data
+    logs.value = msgs
+    docTab.value = data.design_pdf ? 'design' : 'resume'
+    workTab.value = preferTab.value || defaultWork(data.status)
+    preferTab.value = null
+    progressHistoryShown.value = HISTORY_PAGE
+    acceptanceHistoryShown.value = HISTORY_PAGE
+  } finally {
+    if (seq === detailSeq) detailLoading.value = false
+  }
 }
 
 async function load() {
@@ -369,6 +414,10 @@ async function load() {
 }
 
 function ask(kind: 'approve' | 'reject') {
+  if (!detailReady.value) {
+    toast.value?.show('材料还在加载，请稍后再审', 'err')
+    return
+  }
   if (kind === 'reject' && !comment.value.trim()) {
     toast.value?.show('退回时请写下这次的问题', 'err')
     return
@@ -383,18 +432,26 @@ function ask(kind: 'approve' | 'reject') {
 
 async function runDecide() {
   const decision = pending.value
-  if (!decision || !current.value) return
+  if (!decision || !detailReady.value || !detail.value) return
+  const appId = detail.value.id
+  const version = detail.value.version
+  const status = detail.value.status
   busy.value = true
   try {
-    const finalPhase = ['final_submitted', 'mentor_final_review'].includes(current.value.status)
+    const finalPhase = ['final_submitted', 'mentor_final_review'].includes(status)
     const url = finalPhase
-      ? `/applications/${current.value.id}/final/reviews`
-      : `/applications/${current.value.id}/reviews`
+      ? `/applications/${appId}/final/reviews`
+      : `/applications/${appId}/reviews`
     await api.post<ReviewResponse>(url, {
       decision,
       comment: comment.value || null,
-      version: current.value.version,
+      version,
     })
+    if (selectedId.value !== appId) {
+      toast.value?.show('已处理上一份申请', 'ok')
+      await load()
+      return
+    }
     toast.value?.show(decision === 'approve' ? (finalOpen.value && workTab.value === 'final' ? '结项已通过' : '已通过') : '已退回，学生会看到这次的问题', 'ok')
     comment.value = ''
     await load()
@@ -407,20 +464,23 @@ async function runDecide() {
 }
 
 async function sendAdvice() {
-  if (!current.value || !advice.value.trim()) {
+  if (!detailReady.value || !detail.value || !advice.value.trim()) {
     toast.value?.show('请先写下给这次进展的建议', 'err')
     return
   }
+  const appId = detail.value.id
   busy.value = true
   try {
-    await api.post(`/applications/${current.value.id}/messages`, {
+    await api.post(`/applications/${appId}/messages`, {
       body: advice.value.trim(),
       kind: 'feedback',
     })
     advice.value = ''
     toast.value?.show('建议已发给学生，不改变结项状态', 'ok')
-    await loadDetail(current.value.id)
-    workTab.value = 'progress'
+    if (selectedId.value === appId) {
+      await loadDetail(appId)
+      workTab.value = 'progress'
+    }
   } catch (e: unknown) {
     toast.value?.show(e instanceof Error ? e.message : '发送失败', 'err')
   } finally {
@@ -520,15 +580,12 @@ onMounted(load)
             </button>
           </p>
           <p v-else class="org-line warn">尚未绑定社区。请向社区管理员索取邀请码，在「导师注册」页加入。</p>
-          <div class="task-line">
+          <div v-if="hasAssignedProjects" class="task-line">
             <label class="task-field">
               <span>任务</span>
               <select class="task-select" :value="pickedProjectId || ''" @change="onPickProject">
-                <option v-if="!projectOptions.length" value="">
-                  {{ communityNames ? '社区尚未给你分配任务' : '请先加入社区' }}
-                </option>
                 <option v-for="item in projectOptions" :key="item.id" :value="item.id">
-                  {{ item.title }}
+                  {{ item.title }}{{ item.closed ? '（已停招）' : '' }}
                 </option>
               </select>
             </label>
@@ -538,34 +595,38 @@ onMounted(load)
             </label>
             <p v-if="project">
               已入选 {{ project.seats_taken || 0 }} / 名额 {{ project.quota || 0 }}
-              <template v-if="slotsLeft <= 0"> · 设计审核已关闭</template>
+              <template v-if="project.status !== 'published'"> · 已关闭接取，仍可跟进在途学生</template>
+              <template v-else-if="slotsLeft <= 0"> · 设计审核已关闭</template>
               <template v-else-if="pendingDesigns > 1"> · 先把材料对照完，再通过最合适的人</template>
             </p>
-            <p v-else-if="communityNames && !projectOptions.length" class="hint-line">
-              任务由社区管理员在「组织工作台 → 项目」创建，并指定你为负责导师后，才会出现在这里。
-            </p>
           </div>
+          <p v-else class="hint-line">
+            还没有分配给你的项目。请联系社区管理员在组织工作台创建课题并指定你为负责导师。
+          </p>
         </div>
         <div class="top-links">
           <RouterLink v-if="project" :to="`/projects/${project.id}`">任务书</RouterLink>
+          <RouterLink to="/guide#doc-mentor">导师指南</RouterLink>
         </div>
       </div>
     </header>
 
     <div class="filters">
       <div class="filter-tabs">
-        <button type="button" :class="{ on: filter === 'all' }" @click="filter = 'all'">
-          全部 <b>{{ inProject.length }}</b>
-        </button>
-        <button type="button" :class="{ on: filter === 'todo' }" @click="filter = 'todo'">
-          待我处理 <b>{{ counts.todo }}</b>
-        </button>
-        <button type="button" :class="{ on: filter === 'doing' }" @click="filter = 'doing'">
-          进行中 <b>{{ counts.doing }}</b>
-        </button>
-        <button type="button" :class="{ on: filter === 'done' }" @click="filter = 'done'">
-          已结束 <b>{{ counts.done }}</b>
-        </button>
+        <template v-if="hasAssignedProjects">
+          <button type="button" :class="{ on: filter === 'all' }" @click="filter = 'all'">
+            全部 <b>{{ inProject.length }}</b>
+          </button>
+          <button type="button" :class="{ on: filter === 'todo' }" @click="filter = 'todo'">
+            待我处理 <b>{{ counts.todo }}</b>
+          </button>
+          <button type="button" :class="{ on: filter === 'doing' }" @click="filter = 'doing'">
+            进行中 <b>{{ counts.doing }}</b>
+          </button>
+          <button type="button" :class="{ on: filter === 'done' }" @click="filter = 'done'">
+            已结束 <b>{{ counts.done }}</b>
+          </button>
+        </template>
         <button type="button" :class="{ on: filter === 'liaison' }" @click="filter = 'liaison'">
           社区对接
         </button>
@@ -611,6 +672,23 @@ onMounted(load)
       </section>
     </div>
 
+    <div v-else-if="!hasAssignedProjects" class="body empty-desk">
+      <section class="idle empty-card">
+        <h2>暂无负责项目</h2>
+        <p>
+          {{
+            communityNames
+              ? `你已加入「${communityNames}」。课题由社区管理员创建并指定你为负责导师后，会出现在本页。`
+              : '请先向社区管理员索取导师邀请码，完成绑定后再等待课题指派。'
+          }}
+        </p>
+        <div class="empty-acts">
+          <button type="button" class="btn pass" @click="filter = 'liaison'">社区对接</button>
+          <RouterLink class="btn secondary" to="/guide#doc-mentor">导师指南</RouterLink>
+        </div>
+      </section>
+    </div>
+
     <div v-else class="body">
       <aside class="list">
         <div
@@ -638,16 +716,7 @@ onMounted(load)
           <span>{{ jobLabel(a) }}</span>
           <small>{{ formatDateTime(a.latest_update_at || a.updated_at || a.created_at) }}</small>
         </div>
-        <p v-if="!pageRows.length" class="muted empty">
-          <template v-if="!projectOptions.length">
-            {{
-              communityNames
-                ? '还没有分配给你的任务。请社区管理员在组织工作台创建项目并指定你为导师。'
-                : '尚未绑定社区，请先用邀请码加入。'
-            }}
-          </template>
-          <template v-else>这个任务里没有符合条件的同学。</template>
-        </p>
+        <p v-if="!pageRows.length" class="muted empty">这个任务里没有符合条件的同学。</p>
         <div v-if="matched.length > pageSize" class="pager">
           <button type="button" :disabled="page <= 1" @click="page = page - 1">上一页</button>
           <span>{{ page }} / {{ pageCount }} · {{ matched.length }} 人</span>
@@ -655,8 +724,11 @@ onMounted(load)
         </div>
       </aside>
 
-      <section v-if="!current" class="idle">
-        <p>先在上面选一个任务。新进展和新验收在名字旁边，点标记才会消失。人多时用姓名查找，或翻页，每页 20 人。</p>
+      <section v-if="detailLoading && selectedId" class="idle">
+        <p>正在加载该同学的材料…</p>
+      </section>
+      <section v-else-if="!current" class="idle">
+        <p>先在左侧选一位同学。新进展和新验收在名字旁边，点标记才会消失。人多时用姓名查找，或翻页，每页 20 人。</p>
       </section>
 
       <template v-else>
@@ -679,17 +751,18 @@ onMounted(load)
               <button type="button" :class="{ on: docTab === 'resume' }" @click="docTab = 'resume'">简历</button>
               <button type="button" class="linkish" :disabled="!docUrl" @click="openDoc(docTab)">放大预览</button>
             </div>
-            <DocReader v-if="docUrl" :key="docUrl" :url="docUrl" />
+            <DocReader v-if="docUrl && detailReady" :key="`${current.id}-${docUrl}`" :url="docUrl" />
+            <p v-else-if="detailLoading" class="muted pad">材料加载中…</p>
             <p v-else class="muted pad">还没有可预览的申请书 PDF。</p>
             <PdfPreviewModal v-model:open="previewOpen" :url="previewUrl" :title="previewTitle" />
             <div v-if="designOpen" class="decide">
               <label>
                 退回意见
-                <textarea v-model="comment" rows="3" placeholder="通过可以不写。退回时必须写明问题。" />
+                <textarea v-model="comment" rows="3" placeholder="通过可以不写。退回时必须写明问题。" :disabled="!detailReady" />
               </label>
               <div class="acts">
-                <button class="btn pass" type="button" :disabled="busy" @click="ask('approve')">通过设计</button>
-                <button class="btn danger" type="button" :disabled="busy" @click="ask('reject')">退回</button>
+                <button class="btn pass" type="button" :disabled="busy || !detailReady" @click="ask('approve')">通过设计</button>
+                <button class="btn danger" type="button" :disabled="busy || !detailReady" @click="ask('reject')">退回</button>
               </div>
             </div>
           </div>
@@ -735,7 +808,7 @@ onMounted(load)
               给这次进展的建议
               <textarea v-model="advice" rows="3" placeholder="看完材料后写给同学。这只是建议，不会变成未通过。" />
             </label>
-            <button class="btn pass" type="button" :disabled="busy" @click="sendAdvice">发给学生</button>
+            <button class="btn pass" type="button" :disabled="busy || !detailReady" @click="sendAdvice">发给学生</button>
           </div>
 
           <div v-else class="pane scroll">
@@ -785,11 +858,11 @@ onMounted(load)
             <div v-if="finalOpen" class="decide">
               <label>
                 退回意见
-                <textarea v-model="comment" rows="3" placeholder="结项通过可以不写。退回时必须写明要改什么。" />
+                <textarea v-model="comment" rows="3" placeholder="结项通过可以不写。退回时必须写明要改什么。" :disabled="!detailReady" />
               </label>
               <div class="acts">
-                <button class="btn pass" type="button" :disabled="busy" @click="ask('approve')">结项通过</button>
-                <button class="btn danger" type="button" :disabled="busy" @click="ask('reject')">退回</button>
+                <button class="btn pass" type="button" :disabled="busy || !detailReady" @click="ask('approve')">结项通过</button>
+                <button class="btn danger" type="button" :disabled="busy || !detailReady" @click="ask('reject')">退回</button>
               </div>
             </div>
             <p v-else-if="current.status === 'community_final_review'" class="muted">验收已经通过。学生向本社区申请实习，社区通过后组委会自动计入结项名单。</p>
@@ -808,6 +881,35 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   background: #f4f6f8;
+}
+.body.empty-desk {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.25rem;
+}
+.empty-card {
+  max-width: 32rem;
+  text-align: center;
+  background: #fff;
+  border-radius: 12px;
+  padding: 1.5rem 1.75rem;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+.empty-card h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+}
+.empty-card p {
+  margin: 0 0 1rem;
+  color: #64748b;
+  line-height: 1.55;
+}
+.empty-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: center;
 }
 .top, .filters { padding: 12px 20px 0; }
 .top {

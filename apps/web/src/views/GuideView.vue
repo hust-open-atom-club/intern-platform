@@ -28,7 +28,7 @@ const helpDocs: {
   { key: 'faq', title: '热点问题', desc: '报名、审核、结项常见疑问与排障说明', icon: '🔥', tone: 'hot' },
   { key: 'org', title: '组织指南', desc: '社区报名、字段配置、二级审核与公示', icon: '🪐', tone: 'org' },
   { key: 'student', title: '学生指南', desc: '注册申请、三级审核跟踪到结项全流程', icon: '🎓', tone: 'stu' },
-  { key: 'mentor', title: '导师指南', desc: '出题发布、一审指导与结项初审要点', icon: '📋', tone: 'mentor' },
+  { key: 'mentor', title: '导师指南', desc: '审核设计、跟进进展与结项验收要点', icon: '📋', tone: 'mentor' },
   { key: 'flow', title: '经典流程指南', desc: '对标 OSPP 经典模式的完整活动链路', icon: '📝', tone: 'flow' },
 ]
 
@@ -71,10 +71,10 @@ const docMeta: Record<
     title: '导师指南',
     toc: [
       { id: 'men-1', label: '1. 进入导师工作台' },
-      { id: 'men-2', label: '2. 发布项目' },
-      { id: 'men-3', label: '3. 申请一审' },
+      { id: 'men-2', label: '2. 课题如何到你手上' },
+      { id: 'men-3', label: '3. 设计审核（通过即中选）' },
       { id: 'men-4', label: '4. 过程指导' },
-      { id: 'men-5', label: '5. 结项初审' },
+      { id: 'men-5', label: '5. 结项验收与实习' },
     ],
   },
   flow: {
@@ -670,34 +670,32 @@ onUnmounted(() => {
             <section id="men-1" class="guide-sec">
               <h3>1. 进入导师工作台</h3>
               <div class="guide-tags">
-                <span class="guide-tag">组织登录</span>
+                <span class="guide-tag">邀请码注册</span>
                 <span class="guide-tag orange">导师台</span>
               </div>
               <p>
-                右上角「登录」选择「导师」后进入「导师台」，可管理本人项目、待审申请与结项初审队列。
-                请确认账号已绑定到对应社区，否则无法发布归属该社区的项目。
+                向社区管理员索取<strong>导师邀请码</strong>注册/加入后，用「登录 → 导师」进入导师工作台。
+                在此审核设计、看进展、做结项验收，并通过「社区对接」与管理员沟通。
               </p>
             </section>
             <section id="men-2" class="guide-sec">
-              <h3>2. 发布项目</h3>
-              <p>创建项目时请完整填写下列信息，社区准入通过后方可对学生可见并接受申请。</p>
+              <h3>2. 课题如何到你手上</h3>
+              <p>
+                <strong>课题由社区管理员在组织工作台创建，并指定你为负责导师</strong>后，才会出现在工作台「任务」下拉。
+                导师本人不能进组织端建题；需要新课题或改派时，请联系社区管理员。
+              </p>
               <ul class="guide-checklist">
-                <li>标题、描述、难度与技术栈标签</li>
-                <li>名额、仓库链接与参考资料</li>
-                <li>归属已 approved 的社区</li>
-                <li>验收标准与建议里程碑（便于学生写申请）</li>
+                <li>组织创建课题并填写仓库、名额、任务书</li>
+                <li>指定负责导师 → 发布上线</li>
+                <li>学生在「全部任务」中可见并可申请</li>
               </ul>
-              <div class="guide-callout">
-                <span class="ico">✍️</span>
-                <div class="body">
-                  <strong>出题建议</strong>
-                  <p>任务边界清晰、可在暑期周期内完成；避免过大「研究型」题目导致结项困难。</p>
-                </div>
-              </div>
             </section>
             <section id="men-3" class="guide-sec">
-              <h3>3. 申请一审</h3>
-              <p>对学生申请进行导师级审核：通过则进入社区审核；驳回须写明可执行原因。</p>
+              <h3>3. 设计审核（通过即中选）</h3>
+              <p>
+                审简历与设计文档：通过并预留名额后，系统记为中选，学生即可开发；社区/组委会确认并行进行，一般不挡开发。
+                驳回须写明可执行修改点。
+              </p>
               <ol class="guide-steps">
                 <li>
                   <span class="n">1</span>
@@ -705,19 +703,18 @@ onUnmounted(() => {
                 </li>
                 <li>
                   <span class="n">2</span>
-                  <div class="t"><b>看背景</b><span>技术栈与过往贡献是否匹配项目难度。</span></div>
+                  <div class="t"><b>看材料</b><span>真实姓名、简历与设计 PDF 是否匹配难度。</span></div>
                 </li>
                 <li>
                   <span class="n">3</span>
-                  <div class="t"><b>写意见</b><span>通过 / 驳回均写入流水；驳回请指出具体修改点。</span></div>
+                  <div class="t"><b>写意见</b><span>通过 / 驳回写入流水；退回请指出具体修改点。</span></div>
                 </li>
               </ol>
             </section>
             <section id="men-4" class="guide-sec">
               <h3>4. 过程指导</h3>
               <p>
-                中选后通过申请留言与学生保持沟通：对齐里程碑、代码规范与合并节奏。
-                过程讨论可灵活进行，但<strong>关键结论仍以审核流水为准</strong>。
+                学生可多次「更新进展」。你在工作台「进展」页查看并留言建议；建议<strong>不改变结项状态</strong>。
               </p>
               <div class="guide-callout ok">
                 <span class="ico">🤝</span>
@@ -728,12 +725,14 @@ onUnmounted(() => {
               </div>
             </section>
             <section id="men-5" class="guide-sec">
-              <h3>5. 结项初审</h3>
-              <p>核验 PR/MR 是否达标、报告是否完整、附加字段是否齐全；通过后进入组委会成果审核。</p>
+              <h3>5. 结项验收与实习</h3>
+              <p>
+                核验 PR/MR、报告与交付件；通过后学生向<strong>所属社区</strong>提交实习 ZIP，由社区审核，组委会自动计入结项名单。
+              </p>
               <ul class="guide-checklist">
                 <li>PR/MR 可访问，变更与课题目标对应</li>
                 <li>结项报告结构完整（目标 / 工作 / 结果 / 反思）</li>
-                <li>社区专属字段已填写且可核验</li>
+                <li>交付件 ZIP 可下载核验</li>
                 <li>学生身份与 git email 一致</li>
               </ul>
             </section>

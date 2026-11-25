@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from intern_platform.dependencies.auth import AuthUser
 from intern_platform.dependencies.ledger import LedgerRequestContext
 from intern_platform.models.application import Application
+from intern_platform.models.application_message import ApplicationMessage
 from intern_platform.models.community_extension import CommunityExtension
 from intern_platform.models.final_submission import FinalSubmission
 from intern_platform.models.project import Project
@@ -16,6 +19,8 @@ from intern_platform.services.application_workflow import (
     ApplicationWorkflowService,
     TransitionContext,
 )
+from intern_platform.services.message_codec import pack_deliverable_message
+from intern_platform.services.notification_service import NotificationService
 from intern_platform.services.schema_validate import dumps_extra, validate_extra_fields
 
 # 验收审核中（不可再交）
@@ -124,6 +129,41 @@ class FinalService:
         _tx("start_mentor_final", "start_mentor_final")
 
         final.status = "submitted"
+        # 验收材料与状态同事务写入留言，避免「已提交但导师看不到交付件」
+        extra: dict = {}
+        if final.extra_fields:
+            try:
+                parsed = json.loads(final.extra_fields)
+                if isinstance(parsed, dict):
+                    extra = parsed
+            except json.JSONDecodeError:
+                extra = {}
+        packed = pack_deliverable_message(
+            "acceptance",
+            text=(final.report_text or "").strip() or "提交验收",
+            design_doc_url=(final.report_url or "").strip() or "暂无",
+            code_url=(final.pr_mr_url or "").strip() or "暂无",
+            attachment_url=str(extra.get("attachment_url") or "").strip(),
+            attachment_name=str(extra.get("attachment_name") or "").strip(),
+        )
+        self.session.add(
+            ApplicationMessage(
+                application_id=application_id,
+                sender_id=auth.id,
+                body=packed,
+            )
+        )
+        project = self.session.get(Project, app.project_id)
+        if project and project.mentor_id:
+            snippet = (final.report_text or "提交验收").strip()[:180]
+            NotificationService(self.session).create(
+                user_id=project.mentor_id,
+                title="学生提交了验收材料",
+                body=f"「{project.title}」{snippet}",
+                kind="app_acceptance",
+                project_id=app.project_id,
+                application_id=app.id,
+            )
         self.session.commit()
         self.session.refresh(app)
         return app

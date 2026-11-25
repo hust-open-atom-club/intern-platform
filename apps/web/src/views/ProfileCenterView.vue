@@ -109,6 +109,21 @@ const activeApps = computed(() =>
 )
 const completedApps = computed(() => apps.value.filter((a) => a.status === 'completed'))
 const recentApps = computed(() => apps.value.slice(0, 4))
+const mentorPendingCount = computed(
+  () =>
+    mentorInbox.value.filter((a) =>
+      ['submitted', 'mentor_review', 'final_submitted', 'mentor_final_review'].includes(a.status),
+    ).length,
+)
+const mentorActiveCount = computed(
+  () =>
+    mentorInbox.value.filter((a) =>
+      !['completed', 'withdrawn', 'rejected'].includes(a.status),
+    ).length,
+)
+const mentorDoneCount = computed(
+  () => mentorInbox.value.filter((a) => a.status === 'completed').length,
+)
 
 const profileCompleteness = computed(() => {
   const f = form.value
@@ -419,7 +434,7 @@ function consumeBindResult() {
                 d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6V11a6 6 0 1 0-12 0v5l-2 2v1h16v-1l-2-2z"
               />
             </svg>
-            通知公告
+            平台公告
           </button>
           <button v-if="!orgOnly" type="button" :class="{ on: tab === 'profile' }" @click="setTab('profile')">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -598,25 +613,41 @@ function consumeBindResult() {
           </section>
 
           <section class="me-kpi">
-            <button type="button" @click="auth.canApplyProjects && setTab('applications')">
-              <strong>{{ activeApps.length }}</strong>
-              <span>进行中项目</span>
-            </button>
-            <button type="button" @click="auth.canApplyProjects && setTab('applications')">
-              <strong>{{ completedApps.length }}</strong>
-              <span>已结项</span>
-            </button>
-            <button v-if="mentorOnly" type="button">
-              <strong>{{ ownedProjects.length }}</strong>
-              <span>负责项目</span>
-            </button>
-            <button v-else type="button" @click="setTab('profile')">
-              <strong>{{ profileCompleteness }}%</strong>
-              <span>资料完整度</span>
-            </button>
+            <template v-if="mentorOnly">
+              <button type="button" @click="$router.push('/mentor/projects')">
+                <strong>{{ ownedProjects.length }}</strong>
+                <span>负责项目</span>
+              </button>
+              <button type="button" @click="$router.push('/mentor')">
+                <strong>{{ mentorPendingCount }}</strong>
+                <span>待我处理</span>
+              </button>
+              <button type="button" @click="$router.push('/mentor')">
+                <strong>{{ mentorActiveCount }}</strong>
+                <span>跟进中学生</span>
+              </button>
+              <button type="button" @click="$router.push('/mentor')">
+                <strong>{{ mentorDoneCount }}</strong>
+                <span>已结项学生</span>
+              </button>
+            </template>
+            <template v-else>
+              <button type="button" @click="auth.canApplyProjects && setTab('applications')">
+                <strong>{{ activeApps.length }}</strong>
+                <span>进行中项目</span>
+              </button>
+              <button type="button" @click="auth.canApplyProjects && setTab('applications')">
+                <strong>{{ completedApps.length }}</strong>
+                <span>已结项</span>
+              </button>
+              <button type="button" @click="setTab('profile')">
+                <strong>{{ profileCompleteness }}%</strong>
+                <span>资料完整度</span>
+              </button>
+            </template>
             <button type="button" @click="setTab('notices')">
               <strong>{{ notices.length }}</strong>
-              <span>近期公告</span>
+              <span>平台公告</span>
             </button>
           </section>
 
@@ -704,10 +735,10 @@ function consumeBindResult() {
 
             <article v-if="mentorOnly" class="card">
               <header>
-                <h2>近期公告</h2>
+                <h2>平台公告</h2>
                 <button type="button" class="more" @click="setTab('notices')">全部</button>
               </header>
-              <p v-if="!notices.length" class="empty">暂无公告。结项结果发布后会出现在结项公示。</p>
+              <p v-if="!notices.length" class="empty">暂无平台公告。站内提醒请看右上角消息铃铛；结项结果见结项公示。</p>
               <ul v-else class="rows">
                 <li v-for="n in notices.slice(0, 4)" :key="n.id">
                   <RouterLink to="/completed">
@@ -742,12 +773,12 @@ function consumeBindResult() {
 
           <template v-if="tab === 'notices'">
             <div class="page-head">
-              <h1>通知公告</h1>
-              <p>俱乐部与组委会发布的活动、节点提醒。</p>
+              <h1>平台公告</h1>
+              <p>俱乐部与组委会公开发布的公告。审核提醒、进展通知请看右上角消息铃铛。</p>
             </div>
             <p v-if="noticesLoading" class="muted">加载中…</p>
             <div v-else-if="!notices.length" class="empty-box">
-              <p>暂无通知。</p>
+              <p>暂无平台公告。</p>
               <RouterLink class="btn sm" to="/announcements">查看公示</RouterLink>
             </div>
             <div v-else class="list">

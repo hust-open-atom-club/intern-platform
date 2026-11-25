@@ -107,6 +107,7 @@ async function doSubmit() {
   busy.value = true
   error.value = ''
   try {
+    // 先落库材料；submit 成功时后端同事务写入验收留言，避免状态与材料脱节
     await api.put(`/applications/${id()}/final`, {
       pr_mr_url: codeUrl.value.trim() || '暂无',
       report_url: designDoc.value.trim() || '暂无',
@@ -117,17 +118,10 @@ async function doSubmit() {
       },
     })
     await api.post(`/applications/${id()}/final/submit`)
-    await api.post(`/applications/${id()}/messages`, {
-      body: text.value.trim() || '提交验收',
-      kind: 'acceptance',
-      design_doc_url: designDoc.value.trim() || '暂无',
-      code_url: codeUrl.value.trim() || '暂无',
-      attachment_url: zipUrl.value,
-      attachment_name: zipName.value || null,
-    })
     await router.push(`/student/applications/${id()}?tab=task`)
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '提交失败'
+    // 若 PUT 已成功但 submit 失败，保留表单内容便于重试，不清空草稿
   } finally {
     busy.value = false
   }
